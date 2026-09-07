@@ -55,6 +55,9 @@ if ((Convert-FixtureCargoVersion -Source $syntheticCargo -Version $previousVersi
   throw 'Updater fixture previous-v4 version-independence self-test failed'
 }
 
+& (Join-Path $PSScriptRoot 'test_v4_updater_fixture_server.ps1')
+
+
 $invokeArgs = @{ BundleDir = $BundleDir }
 foreach ($name in @('CandidateInstallerPath', 'CandidateSignaturePath', 'CandidateVersion', 'CandidatePublicKeyPath')) {
   if ($PSBoundParameters.ContainsKey($name)) {
