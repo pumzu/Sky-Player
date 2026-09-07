@@ -363,7 +363,10 @@ try {
     notes = 'Deterministic bridge rotation candidate.'
     pub_date = '2026-09-04T00:00:00Z'
     platforms = [ordered]@{
-      'windows-x86_64-nsis' = [ordered]@{
+      # Match the production release-authority manifest exactly. Tauri's
+      # updater accepts this platform key and falls back from the bundle
+      # specific target when the packaged runtime does not expose it.
+      'windows-x86_64' = [ordered]@{
         signature = $signatureText
         url = "http://127.0.0.1:$port/candidate/update.exe"
       }
@@ -376,7 +379,7 @@ try {
       notes = 'Old-root rejection candidate.'
       pub_date = '2026-09-04T00:00:00Z'
       platforms = [ordered]@{
-        'windows-x86_64-nsis' = [ordered]@{
+        'windows-x86_64' = [ordered]@{
           signature = $oldSignatureText
           url = "http://127.0.0.1:$port/candidate/update.exe"
         }
@@ -458,7 +461,7 @@ try {
 
   $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
   $manifestDocument = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-  $manifestPlatform = $manifestDocument.platforms.'windows-x86_64-nsis'
+  $manifestPlatform = $manifestDocument.platforms.'windows-x86_64'
   $expectedCandidateUrl = "http://127.0.0.1:$port/candidate/update.exe"
   if ($null -eq $manifestPlatform -or
     [string]$manifestDocument.version -ne $candidateVersion -or
@@ -472,7 +475,7 @@ try {
     status = 'PASS'
     schema_status = 'PASS'
     version = [string]$manifestDocument.version
-    platform = 'windows-x86_64-nsis'
+    platform = 'windows-x86_64'
     candidate_url = [string]$manifestPlatform.url
     signature_present = $true
     http = $manifestHttp

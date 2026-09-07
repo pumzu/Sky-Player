@@ -37,7 +37,7 @@ foreach ($marker in @(
     "Assert-ExactHttpResponse",
     "fixture-http-evidence.json",
     "body_sha256",
-    "windows-x86_64-nsis",
+    "windows-x86_64",
     "/candidate/update.exe"
 )) {
     if (-not $fixtureCore.Contains($marker)) {

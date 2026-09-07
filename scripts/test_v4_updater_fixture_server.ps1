@@ -24,7 +24,7 @@ foreach ($marker in @(
         'fixture-http-evidence.json',
         'Content-Length',
         'body_sha256',
-        'windows-x86_64-nsis',
+        'windows-x86_64',
         '/candidate/update.exe'
     )) {
     if ($coreContent -notlike "*$marker*") {
@@ -63,7 +63,7 @@ $manifestText = [ordered]@{
     notes = 'Fixture manifest contract test.'
     pub_date = '2026-09-08T00:00:00Z'
     platforms = [ordered]@{
-        'windows-x86_64-nsis' = [ordered]@{
+        'windows-x86_64' = [ordered]@{
             signature = 'fixture-signature'
             url = "http://127.0.0.1:$testPort/candidate/update.exe"
         }
@@ -150,7 +150,7 @@ try {
                 [string]$response.Content.Headers.ContentType.MediaType
             }
             $servedDocument = [Text.Encoding]::UTF8.GetString($servedBytes) | ConvertFrom-Json
-            $servedPlatform = $servedDocument.platforms.'windows-x86_64-nsis'
+            $servedPlatform = $servedDocument.platforms.'windows-x86_64'
             $servedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($servedBytes)).ToLowerInvariant()
             $expectedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($manifestBytes)).ToLowerInvariant()
             if ([int]$response.StatusCode -ne 200 -or

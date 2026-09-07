@@ -638,6 +638,37 @@ mod tests {
     }
 
     #[test]
+    fn production_fixture_manifest_is_tauri_consumable() {
+        let manifest = serde_json::json!({
+            "version": "4.0.0-rc.2",
+            "notes": "Deterministic bridge rotation candidate.",
+            "pub_date": "2026-09-04T00:00:00Z",
+            "platforms": {
+                "windows-x86_64": {
+                    "signature": "fixture-signature",
+                    "url": "http://127.0.0.1:40000/candidate/update.exe"
+                }
+            }
+        });
+        let release: tauri_plugin_updater::RemoteRelease =
+            serde_json::from_value(manifest).expect("fixture manifest must match Tauri schema");
+        assert_eq!(release.version.to_string(), "4.0.0-rc.2");
+        assert_eq!(
+            release
+                .download_url("windows-x86_64")
+                .expect("production platform must be present")
+                .as_str(),
+            "http://127.0.0.1:40000/candidate/update.exe"
+        );
+        assert_eq!(
+            release
+                .signature("windows-x86_64")
+                .expect("production signature must be present"),
+            "fixture-signature"
+        );
+    }
+
+    #[test]
     fn update_installation_has_a_distinct_playback_policy_error() {
         let message = update_activity_error(ActivityReservationError::PhysicalPlaybackActive);
         assert_eq!(
