@@ -24,6 +24,7 @@ foreach ($marker in @(
         'fixture-http-evidence.json',
         'Content-Length',
         'body_sha256',
+        'selftest-update-expected-version-file',
         'windows-x86_64',
         '/candidate/update.exe'
     )) {

@@ -35,6 +35,7 @@ if ($fixtureTargetRoot.Equals($repoRoot, [StringComparison]::OrdinalIgnoreCase) 
 $fixtureBundleRoot = Join-Path $fixtureTargetRoot 'dist/bundle/nsis'
 $installRoot = Join-Path $fixtureRoot 'installed'
 $markerPath = Join-Path $fixtureRoot 'completion.txt'
+$expectedVersionPath = Join-Path $fixtureRoot 'expected-installed-version.txt'
 $cutoverMarkerPath = Join-Path $fixtureRoot 'cutover.txt'
 $safetyPath = Join-Path $fixtureRoot 'safety.txt'
 $stopPath = Join-Path $fixtureRoot 'stop-server'
@@ -499,6 +500,7 @@ try {
   $appProcess = Start-Process -FilePath $appPath -ArgumentList @(
     '--selftest-desktop-update',
     '--selftest-update-marker', $markerPath,
+    '--selftest-update-expected-version-file', $expectedVersionPath,
     '--selftest-update-safety-marker', $safetyPath
   ) -WindowStyle Hidden -PassThru
   Wait-Process -Id $appProcess.Id -Timeout 180

@@ -98,6 +98,20 @@ pub fn run_gui_smoke() {
 /// candidate-v4 workflow. The entry point is hidden from the product UI and
 /// exists only for deterministic packaged qualification.
 pub fn run_update_smoke() {
+    let update_marker = update_smoke_marker("--selftest-update-marker");
+    let expected_version_file = update_smoke_marker("--selftest-update-expected-version-file");
+    if let (Some(marker), Some(expected_path)) = (update_marker.as_ref(), expected_version_file) {
+        if let Ok(expected_version) = std::fs::read_to_string(expected_path) {
+            let expected_version = expected_version.trim();
+            if expected_version == env!("CARGO_PKG_VERSION") {
+                let _ = std::fs::write(
+                    marker,
+                    format!("update-complete:{}\n", env!("CARGO_PKG_VERSION")),
+                );
+                return;
+            }
+        }
+    }
     run_inner(false, true);
 }
 
@@ -129,6 +143,7 @@ pub fn selftest_update_install_rejection_during_playback() -> i32 {
 fn run_inner(gui_smoke: bool, update_smoke: bool) {
     let update_marker = update_smoke_marker("--selftest-update-marker");
     let update_safety_marker = update_smoke_marker("--selftest-update-safety-marker");
+    let expected_version_file = update_smoke_marker("--selftest-update-expected-version-file");
     if let Some(path) = update_safety_marker {
         let _ = UPDATE_SAFETY_LOG.set(path);
     }
@@ -177,6 +192,15 @@ fn run_inner(gui_smoke: bool, update_smoke: bool) {
                         )
                         .map_err(|error| format!("packaged update check response: {error}"))?;
                         if let Some(target) = check.available_version {
+                            if let Some(expected_path) = expected_version_file.as_ref() {
+                                std::fs::write(expected_path, format!("{target}\n")).map_err(
+                                    |error| {
+                                        format!(
+                                            "packaged update expected-version handoff failed: {error}"
+                                        )
+                                    },
+                                )?;
+                            }
                             let _: commands::UpdateHandoffDto =
                                 serde_json::from_value(native.dispatch(
                                     "update.begin_handoff",
