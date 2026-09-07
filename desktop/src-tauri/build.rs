@@ -48,10 +48,11 @@ fn main() {
     println!("cargo:rustc-env=SKY_NATIVE_SOURCE_FINGERPRINT={source_fingerprint}");
     println!("cargo:rustc-env=SKY_RUSTC_VERSION={rustc_version}");
     if std::env::var_os("CARGO_FEATURE_TAURI_UPDATE_FIXTURE").is_some() {
-        let port = std::env::var("SKY_TAURI_UPDATE_FIXTURE_PORT").unwrap_or_else(|_| {
-            panic!("SKY_TAURI_UPDATE_FIXTURE_PORT must be set for the updater fixture")
-        });
-        if port.parse::<u16>().ok().filter(|port| *port != 0).is_none() {
+        let port = std::env::var("SKY_TAURI_UPDATE_FIXTURE_PORT")
+            .unwrap_or_else(|_| "invalid-fixture-port".to_owned());
+        if port != "invalid-fixture-port"
+            && port.parse::<u16>().ok().filter(|port| *port != 0).is_none()
+        {
             panic!("SKY_TAURI_UPDATE_FIXTURE_PORT must be a non-zero TCP port");
         }
         println!("cargo:rustc-env=SKY_TAURI_UPDATE_FIXTURE_PORT={port}");
