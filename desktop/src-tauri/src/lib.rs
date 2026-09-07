@@ -100,16 +100,16 @@ pub fn run_gui_smoke() {
 pub fn run_update_smoke() {
     let update_marker = update_smoke_marker("--selftest-update-marker");
     let expected_version_file = update_smoke_marker("--selftest-update-expected-version-file");
-    if let (Some(marker), Some(expected_path)) = (update_marker.as_ref(), expected_version_file) {
-        if let Ok(expected_version) = std::fs::read_to_string(expected_path) {
-            let expected_version = expected_version.trim();
-            if expected_version == env!("CARGO_PKG_VERSION") {
-                let _ = std::fs::write(
-                    marker,
-                    format!("update-complete:{}\n", env!("CARGO_PKG_VERSION")),
-                );
-                return;
-            }
+    if let (Some(marker), Some(expected_path)) = (update_marker.as_ref(), expected_version_file)
+        && let Ok(expected_version) = std::fs::read_to_string(expected_path)
+    {
+        let expected_version = expected_version.trim();
+        if expected_version == env!("CARGO_PKG_VERSION") {
+            let _ = std::fs::write(
+                marker,
+                format!("update-complete:{}\n", env!("CARGO_PKG_VERSION")),
+            );
+            return;
         }
     }
     run_inner(false, true);
