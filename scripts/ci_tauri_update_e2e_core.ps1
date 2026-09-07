@@ -276,7 +276,6 @@ try {
       }
     } finally {
       $listener.Stop()
-      $listener.Close()
     }
   } -ArgumentList $port, $manifestPath, $archivePath, $stopPath
 
