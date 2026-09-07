@@ -68,10 +68,14 @@ pub fn canonical_installer_name(version: &str) -> String {
     format!("{PRODUCT_NAME}_{version}_{WINDOWS_ARCH}-setup.exe")
 }
 
+pub fn canonical_authority_installer_name(version: &str) -> String {
+    canonical_installer_name(version).replace(' ', ".")
+}
+
 pub fn canonical_asset_url(version: &str) -> String {
     format!(
         "https://github.com/{AUTHORITY_REPOSITORY}/releases/download/v{version}/{}",
-        canonical_installer_name(version).replace(' ', "%20")
+        canonical_authority_installer_name(version)
     )
 }
 
@@ -312,7 +316,7 @@ mod tests {
         let url = canonical_asset_url("4.0.0-beta.1");
         assert_eq!(
             url,
-            "https://github.com/pumni/Sky-Auto-Player-Releases/releases/download/v4.0.0-beta.1/Sky%20Auto%20Player_4.0.0-beta.1_x64-setup.exe"
+            "https://github.com/pumni/Sky-Auto-Player-Releases/releases/download/v4.0.0-beta.1/Sky.Auto.Player_4.0.0-beta.1_x64-setup.exe"
         );
         let first = serde_json::to_string_pretty(&metadata("4.0.0-beta.1", &url)).unwrap();
         let second = serde_json::to_string_pretty(&metadata("4.0.0-beta.1", &url)).unwrap();
@@ -367,7 +371,7 @@ mod tests {
             valid.replace(AUTHORITY_REPOSITORY, SOURCE_REPOSITORY),
             valid.replace("https://", "http://"),
             valid.replace("_x64-setup.exe", "_x64-setup.exe?channel=beta"),
-            valid.replace("Sky%20Auto%20Player", "Sky-Auto-Player-v4"),
+            valid.replace("Sky.Auto.Player", "Sky-Auto-Player-v4"),
         ] {
             assert!(
                 validate_metadata(&metadata("4.0.0", &url), Channel::Stable).is_err(),
