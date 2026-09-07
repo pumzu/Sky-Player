@@ -20,8 +20,10 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 }
 
 $rehearsalRoot = Join-Path ([IO.Path]::GetTempPath()) ("sky-v4-authority-rehearsal-" + [guid]::NewGuid().ToString("N"))
-$artifactName = "v4-authority-upload-rehearsal-" + [guid]::NewGuid().ToString("N") + ".txt"
-$artifactPath = Join-Path $rehearsalRoot $artifactName
+. (Join-Path $PSScriptRoot "v4_qualification_evidence.ps1")
+$sourceArtifactName = "v4 authority upload rehearsal " + [guid]::NewGuid().ToString("N") + ".txt"
+$safeAuthorityName = Get-V4SafeAuthorityAssetName $sourceArtifactName
+$artifactPath = Join-Path $rehearsalRoot $sourceArtifactName
 $downloadPath = Join-Path $rehearsalRoot "downloaded.txt"
 $errorPath = Join-Path $rehearsalRoot "gh-error.log"
 $tag = "v4-authority-rehearsal-" + [guid]::NewGuid().ToString("N")
@@ -164,10 +166,10 @@ try {
     $phase = "upload-asset"
     $uploaded = Invoke-V4ReleaseAuthorityAssetUpload `
         -UploadUrl $uploadUrl `
-        -AssetName $artifactName `
+        -AssetName $safeAuthorityName `
         -FilePath $artifactPath `
         -Token $token
-    if ([string]$uploaded.name -ne $artifactName -or [int64]$uploaded.size -ne [int64]$expectedSize) {
+    if ([string]$uploaded.name -ne $safeAuthorityName -or [int64]$uploaded.size -ne [int64]$expectedSize) {
         throw "authority rehearsal upload response did not preserve the exact asset identity"
     }
 
@@ -175,7 +177,7 @@ try {
     $rehearsed = Invoke-AuthorityApi -Arguments @(
         "api", "repos/$authorityRepository/releases/$releaseId"
     )
-    $asset = @($rehearsed.assets | Where-Object { [string]$_.name -eq $artifactName })
+    $asset = @($rehearsed.assets | Where-Object { [string]$_.name -eq $safeAuthorityName })
     if ($asset.Count -ne 1) { throw "authority rehearsal draft asset was not found" }
 
     $phase = "download-asset"

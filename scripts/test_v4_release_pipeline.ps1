@@ -519,4 +519,117 @@ $recs = @(
     }
 }
 
+# Safe authority asset name contract regression tests
+function Test-SafeAuthorityAssetNameContract {
+    # 1. Source installer name with spaces maps to deterministic safe authority name
+    $sourceInstaller = "Sky Auto Player_4.0.0-rc.1_x64-setup.exe"
+    $safeInstaller = Get-V4SafeAuthorityAssetName $sourceInstaller
+    if ($safeInstaller -ne "Sky.Auto.Player_4.0.0-rc.1_x64-setup.exe") {
+        Fail "Get-V4SafeAuthorityAssetName did not map source installer spaces to dots"
+    }
+    $sourceSig = "$sourceInstaller.sig"
+    $safeSig = Get-V4SafeAuthorityAssetName $sourceSig
+    if ($safeSig -ne "Sky.Auto.Player_4.0.0-rc.1_x64-setup.exe.sig") {
+        Fail "Get-V4SafeAuthorityAssetName did not map signature name spaces to dots"
+    }
+
+    # 2. Source and authority records keep identical SHA and size
+    $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("sky-v4-record-test-" + [guid]::NewGuid().ToString("N"))
+    try {
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $filePath = Join-Path $tempDir $sourceInstaller
+        $testBytes = [byte[]](0x4D, 0x5A, 0x90, 0x00, 0x03)
+        [IO.File]::WriteAllBytes($filePath, $testBytes)
+        $fileSha = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        $rec = [pscustomobject]@{
+            name = $safeInstaller
+            source_name = $sourceInstaller
+            authority_name = $safeInstaller
+            role = "installer"
+            size = [int64]$testBytes.Length
+            sha256 = $fileSha
+        }
+        if ($rec.size -ne [int64]$testBytes.Length -or $rec.sha256 -ne $fileSha) {
+            Fail "source and authority record sizes or SHA-256 digests do not match"
+        }
+        if ($rec.source_name -ne $sourceInstaller -or $rec.authority_name -ne $safeInstaller) {
+            Fail "record does not cleanly separate source_name from authority_name"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $tempDir) {
+            Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 3. Upload response exact-name matching remains mandatory
+    if ($pipeline -notmatch '\[string\]\$uploaded\.name\s+-ne\s+\$authorityName') {
+        Fail "pipeline must enforce uploaded.name -eq authorityName exact response match"
+    }
+
+    # 4. Unsafe name fails before CreateDraft
+    foreach ($unsafe in @(
+        "", "   ", "path/separator", "path\separator", ".leadingdot", "-leadinghyphen",
+        ".", "..", "invalid*char", "invalid?char", "invalid:char", "invalid|char"
+    )) {
+        $failedClosed = $false
+        try {
+            $null = Get-V4SafeAuthorityAssetName $unsafe
+        } catch {
+            $failedClosed = $true
+        }
+        if (-not $failedClosed) {
+            Fail "Get-V4SafeAuthorityAssetName accepted unsafe name: '$unsafe'"
+        }
+    }
+
+    # 5. Authority-name collision fails before CreateDraft
+    if ($pipeline -notmatch 'authority asset name collision detected') {
+        Fail "pipeline must contain authority asset name collision check before CreateDraft"
+    }
+
+    # 6. Downloaded safe-name asset qualifies against source-name evidence without byte mutation
+    $qualTestDir = Join-Path ([IO.Path]::GetTempPath()) ("sky-v4-download-qual-test-" + [guid]::NewGuid().ToString("N"))
+    try {
+        New-Item -ItemType Directory -Path $qualTestDir -Force | Out-Null
+        $dlDir = Join-Path $qualTestDir "downloaded"
+        $bundleDir = Join-Path $qualTestDir "bundle"
+        New-Item -ItemType Directory -Path $dlDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+        $dlFile = Join-Path $dlDir $safeInstaller
+        $fixtureBytes = [byte[]](0xDE, 0xAD, 0xBE, 0xEF, 0x42)
+        [IO.File]::WriteAllBytes($dlFile, $fixtureBytes)
+        $dlHash = (Get-FileHash -LiteralPath $dlFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        # Stage to bundle under source name
+        $stagedFile = Join-Path $bundleDir $sourceInstaller
+        Copy-Item -LiteralPath $dlFile -Destination $stagedFile
+        $stagedHash = (Get-FileHash -LiteralPath $stagedFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($stagedHash -ne $dlHash) {
+            Fail "staging safe authority name into source bundle mutated file bytes"
+        }
+        if ((Get-Item -LiteralPath $stagedFile).Name -ne $sourceInstaller) {
+            Fail "staged file name does not match expected source installer name"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $qualTestDir) {
+            Remove-Item -LiteralPath $qualTestDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 7. Authority rehearsal exercises a filename that would normalize and proves sending already-safe name
+    if ($rehearsal -notmatch 'sourceArtifactName\s*=\s*"v4 authority upload rehearsal ') {
+        Fail "authority rehearsal must exercise a source artifact name containing spaces"
+    }
+    if ($rehearsal -notmatch 'safeAuthorityName\s*=\s*Get-V4SafeAuthorityAssetName') {
+        Fail "authority rehearsal must map source name via Get-V4SafeAuthorityAssetName"
+    }
+    if ($rehearsal -notmatch '-AssetName\s+\$safeAuthorityName') {
+        Fail "authority rehearsal must upload asset with safeAuthorityName"
+    }
+
+    Write-Host "V4 safe authority asset name contract: PASS (deterministic dot mapping; collision check; exact response check; safe staging)"
+}
+
+Test-SafeAuthorityAssetNameContract
+
 Write-Host "V4 release pipeline contract/self-test: PASS (mock draft/download/qualify/attest/publish/promote; build count=1)"

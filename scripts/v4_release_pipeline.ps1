@@ -43,6 +43,7 @@ $installedAuthenticodeEvidenceName = "INSTALLED_AUTHENTICODE_EVIDENCE.json"
 $summaryName = "TAURI_ARTIFACT_SUMMARY.json"
 $sbomName = "SBOM.spdx.json"
 . (Join-Path $PSScriptRoot "v4_release_authority_upload.ps1")
+. (Join-Path $PSScriptRoot "v4_qualification_evidence.ps1")
 
 function Fail([string]$Message) {
     throw "V4 release pipeline failed closed: $Message"
@@ -287,9 +288,13 @@ function Get-FileRecord([object]$Candidate) {
     if (-not (Test-Path -LiteralPath $Candidate.path -PathType Leaf)) { Fail "qualified candidate file is missing: $($Candidate.name)" }
     $item = Get-Item -LiteralPath $Candidate.path
     if ($item.Length -le 0) { Fail "qualified candidate file is empty: $($Candidate.name)" }
+    $sourceName = [string]$Candidate.name
+    $authorityName = Get-V4SafeAuthorityAssetName $sourceName
     return [pscustomobject]@{
-        name = $Candidate.name
-        role = $Candidate.role
+        name = $authorityName
+        source_name = $sourceName
+        authority_name = $authorityName
+        role = [string]$Candidate.role
         size = [int64]$item.Length
         sha256 = (Get-FileHash -LiteralPath $Candidate.path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
@@ -297,7 +302,15 @@ function Get-FileRecord([object]$Candidate) {
 
 function Assert-EvidenceIdentity([string]$ProductionPath, [string]$QualificationPath, [object[]]$Records) {
     $recordsByName = @{}
-    foreach ($record in @($Records)) { $recordsByName[[string]$record.name] = $record }
+    foreach ($record in @($Records)) {
+        $recordsByName[[string]$record.name] = $record
+        if ($null -ne $record.PSObject.Properties['source_name'] -and -not [string]::IsNullOrWhiteSpace([string]$record.source_name)) {
+            $recordsByName[[string]$record.source_name] = $record
+        }
+        if ($null -ne $record.PSObject.Properties['authority_name'] -and -not [string]::IsNullOrWhiteSpace([string]$record.authority_name)) {
+            $recordsByName[[string]$record.authority_name] = $record
+        }
+    }
     foreach ($requiredName in @($productionEvidenceName, $qualificationEvidenceName, $authenticodeEvidenceName, $sbomName)) {
         if (-not $recordsByName.ContainsKey($requiredName)) { Fail "candidate manifest is missing required identity record: $requiredName" }
     }
@@ -315,23 +328,28 @@ function Assert-EvidenceIdentity([string]$ProductionPath, [string]$Qualification
     if ([string]$evidence.updater_signature_status -ne "valid" -or [string]$evidence.qualification_status -ne "PASS") {
         Fail "production evidence omitted a mandatory updater or qualification result"
     }
+    $instRec = $recordsByName[(Get-ExpectedInstallerName)]
+    $sigRec = $recordsByName["$((Get-ExpectedInstallerName)).sig"]
+    $instSourceName = if ($null -ne $instRec.PSObject.Properties['source_name']) { [string]$instRec.source_name } else { [string]$instRec.name }
+    $sigSourceName = if ($null -ne $sigRec.PSObject.Properties['source_name']) { [string]$sigRec.source_name } else { [string]$sigRec.name }
+
     if ([string]$evidence.installer -ne (Get-ExpectedInstallerName) -or
         [string]$evidence.updater_signature -ne "$(Get-ExpectedInstallerName).sig" -or
         [string]$evidence.authenticode_evidence -ne $authenticodeEvidenceName -or
         [string]$evidence.sbom -ne $sbomName -or
-        [string]$evidence.installer -ne [string]$recordsByName[(Get-ExpectedInstallerName)].name -or
-        [int64]$evidence.installer_size -ne [int64]$recordsByName[(Get-ExpectedInstallerName)].size -or
-        [string]$evidence.installer_sha256 -ne [string]$recordsByName[(Get-ExpectedInstallerName)].sha256 -or
-        [int64]$evidence.signature_size -ne [int64]$recordsByName["$((Get-ExpectedInstallerName)).sig"].size -or
-        [string]$evidence.updater_signature_sha256 -ne [string]$recordsByName["$((Get-ExpectedInstallerName)).sig"].sha256 -or
+        [string]$evidence.installer -ne $instSourceName -or
+        [int64]$evidence.installer_size -ne [int64]$instRec.size -or
+        [string]$evidence.installer_sha256 -ne [string]$instRec.sha256 -or
+        [int64]$evidence.signature_size -ne [int64]$sigRec.size -or
+        [string]$evidence.updater_signature_sha256 -ne [string]$sigRec.sha256 -or
         [string]$evidence.authenticode_evidence_sha256 -ne [string]$recordsByName[$authenticodeEvidenceName].sha256 -or
         [string]$evidence.sbom_sha256 -ne [string]$recordsByName[$sbomName].sha256) {
         Fail "production evidence digests or sizes do not match the candidate manifest"
     }
     if ([string]$qualification.installer -ne (Get-ExpectedInstallerName) -or
         [string]$qualification.updater_signature -ne "$(Get-ExpectedInstallerName).sig" -or
-        [string]$qualification.installer_sha256 -ne [string]$recordsByName[(Get-ExpectedInstallerName)].sha256 -or
-        [string]$qualification.updater_signature_sha256 -ne [string]$recordsByName["$((Get-ExpectedInstallerName)).sig"].sha256 -or
+        [string]$qualification.installer_sha256 -ne [string]$instRec.sha256 -or
+        [string]$qualification.updater_signature_sha256 -ne [string]$sigRec.sha256 -or
         [string]$qualification.authenticode_mode -ne "unsigned-zero-budget" -or
         [string]$qualification.sbom_sha256 -ne [string]$recordsByName[$sbomName].sha256) {
         Fail "qualification evidence does not bind the exact candidate manifest"
@@ -374,6 +392,14 @@ function Invoke-BuildCandidate {
     }
 
     $records = @(Get-CandidateRecords | ForEach-Object { Get-FileRecord $_ })
+    $authorityNames = @{}
+    foreach ($record in $records) {
+        $authName = [string]$record.authority_name
+        if ($authorityNames.ContainsKey($authName)) {
+            Fail "authority asset name collision detected: '$authName' from source '$($record.source_name)' and '$($authorityNames[$authName])'"
+        }
+        $authorityNames[$authName] = [string]$record.source_name
+    }
     Assert-CandidateEvidence $records
     $manifest = [ordered]@{
         schema_version = 1
@@ -430,20 +456,22 @@ function Invoke-CreateDraft {
     }
 
     foreach ($record in $manifest.assets) {
-        $candidate = (Get-CandidateRecords | Where-Object { $_.name -eq [string]$record.name })
-        if ($null -eq $candidate) { Fail "candidate manifest contains an unknown asset" }
+        $sourceName = if ($null -ne $record.PSObject.Properties['source_name']) { [string]$record.source_name } else { [string]$record.name }
+        $authorityName = if ($null -ne $record.PSObject.Properties['authority_name']) { [string]$record.authority_name } else { Get-V4SafeAuthorityAssetName $sourceName }
+        $candidate = (Get-CandidateRecords | Where-Object { $_.name -eq $sourceName })
+        if ($null -eq $candidate) { Fail "candidate manifest contains an unknown asset: $sourceName" }
         # GitHub's release-specific upload_url is deliberately used here. The
         # endpoint rejects duplicate names; this path never deletes or
         # replaces an asset after a failed upload.
         $uploaded = Invoke-V4ReleaseAuthorityAssetUpload `
             -UploadUrl $uploadUrl `
-            -AssetName ([string]$record.name) `
+            -AssetName $authorityName `
             -FilePath ([string]$candidate.path) `
             -Token (Get-AuthorityToken)
-        if ([string]$uploaded.name -ne [string]$record.name -or
+        if ([string]$uploaded.name -ne $authorityName -or
             [int64]$uploaded.size -ne [int64]$record.size -or
             [string]$uploaded.state -ne "uploaded") {
-            Fail "authority upload did not return the exact uploaded asset: $($record.name)"
+            Fail "authority upload did not return the exact uploaded asset: $authorityName"
         }
     }
     $state = [ordered]@{
@@ -466,7 +494,9 @@ function Invoke-CreateDraft {
 
 function Assert-ExactAssetSet([object]$Release, [object[]]$Expected) {
     $actual = @($Release.assets | ForEach-Object { [string]$_.name } | Sort-Object)
-    $expectedNames = @($Expected | ForEach-Object { [string]$_.name } | Sort-Object)
+    $expectedNames = @($Expected | ForEach-Object {
+        if ($null -ne $_.PSObject.Properties['authority_name']) { [string]$_.authority_name } else { [string]$_.name }
+    } | Sort-Object)
     if (($actual -join "`n") -ne ($expectedNames -join "`n")) { Fail "authority release asset set differs from the qualified candidate set" }
 }
 
@@ -486,14 +516,15 @@ function Invoke-DownloadDraft {
     if (Test-Path -LiteralPath $downloaded) { Remove-Item -LiteralPath $downloaded -Recurse -Force }
     New-Item -ItemType Directory -Path $downloaded -Force | Out-Null
     foreach ($expected in $state.assets) {
-        $asset = @($release.assets | Where-Object { [string]$_.name -eq [string]$expected.name })
-        if ($asset.Count -ne 1) { Fail "expected authority asset is missing" }
-        $destination = Join-Path $downloaded ([IO.Path]::GetFileName([string]$expected.name))
+        $expectedAuthorityName = if ($null -ne $expected.PSObject.Properties['authority_name']) { [string]$expected.authority_name } else { [string]$expected.name }
+        $asset = @($release.assets | Where-Object { [string]$_.name -eq $expectedAuthorityName })
+        if ($asset.Count -ne 1) { Fail "expected authority asset is missing: $expectedAuthorityName" }
+        $destination = Join-Path $downloaded ([IO.Path]::GetFileName($expectedAuthorityName))
         Invoke-AuthorityApi -Arguments @("api", [string]$asset[0].url, "--header", "Accept: application/octet-stream") -BinaryOutput -OutputPath $destination
         $item = Get-Item -LiteralPath $destination
         $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
         if ([int64]$item.Length -ne [int64]$expected.size -or $hash -ne [string]$expected.sha256) {
-            Fail "downloaded authority asset differs in size or SHA-256: $($expected.name)"
+            Fail "downloaded authority asset differs in size or SHA-256: $expectedAuthorityName"
         }
     }
     Write-JsonFile (Join-Path (Get-EffectiveStateRoot) "downloaded-manifest.json") ([ordered]@{
@@ -525,19 +556,22 @@ function Invoke-QualifyDownloaded {
     $bundle = Join-Path $root "downloaded-bundle"
     if (Test-Path -LiteralPath $bundle) { Remove-Item -LiteralPath $bundle -Recurse -Force }
     New-Item -ItemType Directory -Path $bundle -Force | Out-Null
-    $installer = Get-ExpectedInstallerName
-    Copy-Item -LiteralPath (Join-Path $downloaded $installer) -Destination (Join-Path $bundle $installer)
-    Copy-Item -LiteralPath (Join-Path $downloaded "$installer.sig") -Destination (Join-Path $bundle "$installer.sig")
+    $sourceInstaller = Get-ExpectedInstallerName
+    $sourceSignature = "$sourceInstaller.sig"
+    $authorityInstaller = Get-V4SafeAuthorityAssetName $sourceInstaller
+    $authoritySignature = Get-V4SafeAuthorityAssetName $sourceSignature
+    Copy-Item -LiteralPath (Join-Path $downloaded $authorityInstaller) -Destination (Join-Path $bundle $sourceInstaller)
+    Copy-Item -LiteralPath (Join-Path $downloaded $authoritySignature) -Destination (Join-Path $bundle $sourceSignature)
 
     Invoke-Checked "pwsh" @(
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $PSScriptRoot "verify_v4_authenticode.ps1"),
-        "-Mode", "unsigned-zero-budget", "-Artifact", (Join-Path $downloaded $installer),
+        "-Mode", "unsigned-zero-budget", "-Artifact", (Join-Path $bundle $sourceInstaller),
         "-Evidence", (Join-Path $root "downloaded-authenticode-verification.json")
     ) "downloaded candidate Authenticode state is not unsigned-zero-budget"
     Invoke-Checked "cargo" @(
-        "xtask", "updater-trust", "verify-signature", "--installer", (Join-Path $downloaded $installer),
-        "--signature", (Join-Path $downloaded "$installer.sig")
+        "xtask", "updater-trust", "verify-signature", "--installer", (Join-Path $bundle $sourceInstaller),
+        "--signature", (Join-Path $bundle $sourceSignature)
     ) "downloaded candidate Tauri updater signature verification failed"
     Invoke-Checked "cargo" @(
         "xtask", "sbom", "verify", "--artifact-dir", $bundle, "--sbom", (Join-Path $downloaded $sbomName)
@@ -567,8 +601,8 @@ function Invoke-QualifyDownloaded {
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $PSScriptRoot "ci_tauri_update_e2e.ps1"),
         "-BundleDir", $fixtureBundle,
-        "-CandidateInstallerPath", (Join-Path $downloaded $installer),
-        "-CandidateSignaturePath", (Join-Path $downloaded "$installer.sig"),
+        "-CandidateInstallerPath", (Join-Path $bundle $sourceInstaller),
+        "-CandidateSignaturePath", (Join-Path $bundle $sourceSignature),
         "-CandidateVersion", $Version,
         "-CandidatePublicKeyPath", $canonicalPublicKey
     ) "exact downloaded previous-v4 to candidate-v4 updater qualification failed"
@@ -581,11 +615,14 @@ function Invoke-QualifyDownloaded {
     Invoke-Checked "pwsh" @(
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $PSScriptRoot "scan_v4_defender_exact.ps1"),
-        "-Artifact", (Join-Path $downloaded $installer),
+        "-Artifact", (Join-Path $bundle $sourceInstaller),
         "-Evidence", $defenderEvidencePath
     ) "exact downloaded installer Defender scan failed"
     $defenderEvidence = Read-JsonFile $defenderEvidencePath
-    $installerRecord = @($state.assets | Where-Object { [string]$_.name -eq $installer })
+    $installerRecord = @($state.assets | Where-Object {
+        [string]$_.name -eq $authorityInstaller -or
+        ($null -ne $_.PSObject.Properties['source_name'] -and [string]$_.source_name -eq $sourceInstaller)
+    })
     if (-not [bool]$defenderEvidence.scan_performed -or
         [string]$defenderEvidence.detection_result -ne "none" -or
         $installerRecord.Count -ne 1 -or
@@ -607,7 +644,7 @@ function Invoke-QualifyDownloaded {
     New-Item -ItemType Directory -Path $preservationRoot -Force | Out-Null
     [IO.File]::WriteAllText($preservationMarker, "external-user-data-marker`n", [Text.UTF8Encoding]::new($false))
     try {
-        $install = Start-Process -FilePath (Join-Path $downloaded $installer) -ArgumentList @("/S", "/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
+        $install = Start-Process -FilePath (Join-Path $bundle $sourceInstaller) -ArgumentList @("/S", "/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
         if ($install.ExitCode -ne 0) { Fail "downloaded candidate current-user installer failed" }
         if (-not (Test-Path -LiteralPath $app) -or -not (Test-Path -LiteralPath $uninstaller)) { Fail "downloaded candidate install omitted app or uninstaller" }
         $installedPe = @(Get-ChildItem -LiteralPath $installRoot -File -Recurse | Where-Object {
@@ -628,7 +665,7 @@ function Invoke-QualifyDownloaded {
         $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @("/S") -WindowStyle Hidden -Wait -PassThru
         if ($uninstall.ExitCode -ne 0) { Fail "downloaded candidate uninstall failed" }
         if (-not (Test-Path -LiteralPath $preservationMarker -PathType Leaf)) { Fail "uninstall removed external app/user data" }
-        $reinstall = Start-Process -FilePath (Join-Path $downloaded $installer) -ArgumentList @("/S", "/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
+        $reinstall = Start-Process -FilePath (Join-Path $bundle $sourceInstaller) -ArgumentList @("/S", "/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
         if ($reinstall.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $app)) { Fail "downloaded candidate reinstall failed" }
         if (-not (Test-Path -LiteralPath $preservationMarker -PathType Leaf)) { Fail "reinstall did not preserve external app/user data" }
         $finalUninstall = Start-Process -FilePath (Join-Path $installRoot "uninstall.exe") -ArgumentList @("/S") -WindowStyle Hidden -Wait -PassThru
@@ -674,11 +711,12 @@ function Invoke-PublishDraft {
     if (-not $release.draft -or [string]$release.tag_name -ne $Tag) { Fail "draft is missing or has changed before publication" }
     Assert-ExactAssetSet $release $state.assets
     foreach ($expected in $state.assets) {
-        $asset = @($release.assets | Where-Object { [string]$_.name -eq [string]$expected.name })
-        if ($asset.Count -ne 1 -or [int64]$asset[0].size -ne [int64]$expected.size) { Fail "draft asset changed before publication" }
-        $downloadedPath = Join-Path (Get-EffectiveStateRoot) "downloaded/$($expected.name)"
+        $expectedAuthorityName = if ($null -ne $expected.PSObject.Properties['authority_name']) { [string]$expected.authority_name } else { [string]$expected.name }
+        $asset = @($release.assets | Where-Object { [string]$_.name -eq $expectedAuthorityName })
+        if ($asset.Count -ne 1 -or [int64]$asset[0].size -ne [int64]$expected.size) { Fail "draft asset changed before publication: $expectedAuthorityName" }
+        $downloadedPath = Join-Path (Get-EffectiveStateRoot) "downloaded/$expectedAuthorityName"
         $downloadedHash = (Get-FileHash -LiteralPath $downloadedPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($downloadedHash -ne [string]$expected.sha256) { Fail "qualified downloaded digest changed before publication" }
+        if ($downloadedHash -ne [string]$expected.sha256) { Fail "qualified downloaded digest changed before publication: $expectedAuthorityName" }
     }
     $patchPath = Join-Path (Get-EffectiveStateRoot) "publish-release.json"
     Write-JsonFile $patchPath ([ordered]@{ draft = $false })
@@ -718,8 +756,11 @@ function Invoke-PromoteMetadata {
     if (-not (Test-Path -LiteralPath (Join-Path $authorityCheckout ".git") -PathType Container)) { Fail "authority checkout main was not obtained" }
     $metadata = Join-Path $root "latest.json"
     $notesPath = Assert-ReleaseNotes
-    $signature = Join-Path $downloaded "$((Get-ExpectedInstallerName)).sig"
-    $assetUrl = "https://github.com/$authorityRepository/releases/download/$Tag/$((Get-ExpectedInstallerName).Replace(' ', '%20'))"
+    $sourceInstaller = Get-ExpectedInstallerName
+    $authorityInstaller = Get-V4SafeAuthorityAssetName $sourceInstaller
+    $authoritySignature = Get-V4SafeAuthorityAssetName "$sourceInstaller.sig"
+    $signature = Join-Path $downloaded $authoritySignature
+    $assetUrl = "https://github.com/$authorityRepository/releases/download/$Tag/$authorityInstaller"
     Invoke-Checked "cargo" @(
         "xtask", "release-authority", "generate", "--channel", $Channel, "--version", $Version,
         "--notes-file", $notesPath, "--pub-date", $PublicationDateUtc, "--platform", "windows-x86_64",
@@ -758,12 +799,13 @@ function Invoke-FinalVerify {
     Assert-ImmutableRelease $release
     Assert-ExactAssetSet $release $state.assets
     foreach ($expected in $state.assets) {
-        $asset = @($release.assets | Where-Object { [string]$_.name -eq [string]$expected.name })
-        if ($asset.Count -ne 1 -or [int64]$asset[0].size -ne [int64]$expected.size) { Fail "final public asset identity changed" }
-        $finalPath = Join-Path (Get-EffectiveStateRoot) "final-$($expected.name)"
+        $expectedAuthorityName = if ($null -ne $expected.PSObject.Properties['authority_name']) { [string]$expected.authority_name } else { [string]$expected.name }
+        $asset = @($release.assets | Where-Object { [string]$_.name -eq $expectedAuthorityName })
+        if ($asset.Count -ne 1 -or [int64]$asset[0].size -ne [int64]$expected.size) { Fail "final public asset identity changed: $expectedAuthorityName" }
+        $finalPath = Join-Path (Get-EffectiveStateRoot) "final-$expectedAuthorityName"
         Invoke-AuthorityApi -Arguments @("api", [string]$asset[0].url, "--header", "Accept: application/octet-stream") -BinaryOutput -OutputPath $finalPath
         $hash = (Get-FileHash -LiteralPath $finalPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne [string]$expected.sha256) { Fail "final public asset digest differs from qualified bytes" }
+        if ($hash -ne [string]$expected.sha256) { Fail "final public asset digest differs from qualified bytes: $expectedAuthorityName" }
     }
     $metadataResponse = Invoke-AuthorityApi -Arguments @("api", "repos/$authorityRepository/contents/channels/$Channel/latest.json?ref=main")
     $metadataPath = Join-Path (Get-EffectiveStateRoot) "final-metadata.json"
@@ -771,11 +813,14 @@ function Invoke-FinalVerify {
     [IO.File]::WriteAllBytes($metadataPath, [Convert]::FromBase64String($metadataBase64))
     Invoke-Checked "cargo" @("xtask", "release-authority", "validate", "--channel", $Channel, "--metadata", $metadataPath) "final public metadata failed deterministic validation"
     $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-    $expectedUrl = "https://github.com/$authorityRepository/releases/download/$Tag/$((Get-ExpectedInstallerName).Replace(' ', '%20'))"
+    $sourceInstaller = Get-ExpectedInstallerName
+    $authorityInstaller = Get-V4SafeAuthorityAssetName $sourceInstaller
+    $authoritySignature = Get-V4SafeAuthorityAssetName "$sourceInstaller.sig"
+    $expectedUrl = "https://github.com/$authorityRepository/releases/download/$Tag/$authorityInstaller"
     if ([string]$metadata.version -ne $Version -or [string]$metadata.platforms.'windows-x86_64'.url -ne $expectedUrl) {
         Fail "final metadata does not reference the exact immutable public asset"
     }
-    $finalSignature = Get-Content -LiteralPath (Join-Path (Get-EffectiveStateRoot) "final-$((Get-ExpectedInstallerName)).sig") -Raw
+    $finalSignature = Get-Content -LiteralPath (Join-Path (Get-EffectiveStateRoot) "final-$authoritySignature") -Raw
     $metadataSignature = [string]$metadata.platforms.'windows-x86_64'.signature
     if ($finalSignature.Trim() -ne $metadataSignature.Trim()) {
         Fail "final metadata signature does not match the exact public Tauri signature asset"

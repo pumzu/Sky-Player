@@ -110,3 +110,30 @@ function New-V4CanonicalProductionEvidence {
     }
 }
 
+function Get-V4SafeAuthorityAssetName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        throw "Asset name must not be null or whitespace"
+    }
+    if ($Name.Contains('/') -or $Name.Contains('\')) {
+        throw "Asset name must not contain path separators: $Name"
+    }
+    if ($Name -eq '.' -or $Name -eq '..') {
+        throw "Asset name must not be '.' or '..': $Name"
+    }
+    if ($Name.StartsWith('.') -or $Name.StartsWith('-')) {
+        throw "Asset name must not start with '.' or '-': $Name"
+    }
+
+    $safeName = $Name.Replace(' ', '.')
+    if ($safeName -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "Asset name '$Name' (normalized to '$safeName') contains invalid characters; must match '^[A-Za-z0-9._-]+$'"
+    }
+
+    return $safeName
+}
+
