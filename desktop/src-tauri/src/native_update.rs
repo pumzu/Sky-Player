@@ -34,6 +34,10 @@ const V4_TAURI_UPDATER_PUBLIC_KEYS: &[&str] = &[V4_TAURI_UPDATER_PUBLIC_KEY];
 #[cfg(feature = "tauri-update-fixture")]
 const FIXTURE_TAURI_UPDATER_PUBLIC_KEYS: Option<&str> =
     option_env!("SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS");
+const FIXTURE_TAURI_UPDATER_PORT: &str = match option_env!("SKY_TAURI_UPDATE_FIXTURE_PORT") {
+    Some(port) => port,
+    None => "invalid-fixture-port",
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeUpdateCandidate {
@@ -460,8 +464,10 @@ fn first_verified_download<T>(
 fn authority_endpoint(channel: UpdateChannel) -> Result<Url, String> {
     let endpoint = if cfg!(feature = "tauri-update-fixture") {
         match channel {
-            UpdateChannel::Stable => "http://127.0.0.1:17845/stable",
-            UpdateChannel::Beta => "http://127.0.0.1:17845/beta",
+            UpdateChannel::Stable => {
+                format!("http://127.0.0.1:{FIXTURE_TAURI_UPDATER_PORT}/stable")
+            }
+            UpdateChannel::Beta => format!("http://127.0.0.1:{FIXTURE_TAURI_UPDATER_PORT}/beta"),
         }
     } else {
         let endpoint = match channel {
@@ -471,9 +477,9 @@ fn authority_endpoint(channel: UpdateChannel) -> Result<Url, String> {
         if !endpoint.contains(V4_RELEASE_AUTHORITY_REPOSITORY) {
             return Err("v4 authority URL is outside the dedicated release repository".into());
         }
-        endpoint
+        endpoint.to_owned()
     };
-    Url::parse(endpoint).map_err(|error| {
+    Url::parse(&endpoint).map_err(|error| {
         if cfg!(feature = "tauri-update-fixture") {
             format!("fixture authority URL invalid: {error}")
         } else {

@@ -6,6 +6,7 @@ param(
   [string]$CandidateSignaturePath,
   [string]$CandidateVersion,
   [string]$CandidatePublicKeyPath,
+  [string]$EvidencePath,
   [switch]$KeepFixtureOnFailure
 )
 
@@ -62,7 +63,16 @@ if ($providedCandidate) {
 }
 $candidateVersion = if ($providedCandidate) { $CandidateVersion } else { '4.0.0-alpha.2' }
 $cutoverVersion = '4.0.0-alpha.3'
-$port = 17845
+$requestLogPath = Join-Path $fixtureRoot 'http-requests.jsonl'
+$httpEvidencePath = if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
+  Join-Path $fixtureRoot 'fixture-http-evidence.json'
+} else {
+  [IO.Path]::GetFullPath($EvidencePath)
+}
+$manifestContract = [ordered]@{ status = 'not-checked' }
+$candidateContract = [ordered]@{ status = 'not-checked' }
+$fixtureStatus = 'FAIL'
+$port = 0
 $serverJob = $null
 $previousInstallerCopy = Join-Path $fixtureRoot 'previous-v4-setup.exe'
 $candidateArchive = $null
@@ -71,6 +81,114 @@ $candidateCargoPath = Join-Path $desktopRoot 'src-tauri/Cargo.toml'
 $lockPath = Join-Path $repoRoot 'rust/Cargo.lock'
 $cargoSource = [IO.File]::ReadAllText($candidateCargoPath)
 $lockSource = [IO.File]::ReadAllText($lockPath)
+
+function Get-DisposableLoopbackPort {
+  $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+  try {
+    $probe.Start()
+    return ([Net.IPEndPoint]$probe.LocalEndpoint).Port
+  } finally {
+    $probe.Stop()
+  }
+}
+
+function Get-ByteSha256([byte[]]$Bytes) {
+  return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+}
+
+function Invoke-LoopbackHttpBytes([string]$Uri) {
+  $handler = [Net.Http.HttpClientHandler]::new()
+  $handler.UseProxy = $false
+  $client = [Net.Http.HttpClient]::new($handler)
+  try {
+    $response = $client.GetAsync($Uri).GetAwaiter().GetResult()
+    try {
+      $bytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+      $contentType = if ($null -ne $response.Content.Headers.ContentType) {
+        [string]$response.Content.Headers.ContentType.MediaType
+      } else {
+        ''
+      }
+      $contentLength = $response.Content.Headers.ContentLength
+      return [pscustomobject]@{
+        status_code = [int]$response.StatusCode
+        content_type = $contentType
+        content_length = if ($null -eq $contentLength) { [int64]$bytes.Length } else { [int64]$contentLength }
+        body_length = [int64]$bytes.Length
+        body_sha256 = Get-ByteSha256 $bytes
+        body = $bytes
+      }
+    } finally {
+      $response.Dispose()
+    }
+  } finally {
+    $client.Dispose()
+    $handler.Dispose()
+  }
+}
+
+function Assert-ExactHttpResponse {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Response,
+    [Parameter(Mandatory = $true)] [byte[]]$ExpectedBytes,
+    [Parameter(Mandatory = $true)] [string]$ExpectedContentType,
+    [Parameter(Mandatory = $true)] [string]$Name
+  )
+  $expectedHash = Get-ByteSha256 $ExpectedBytes
+  if ($Response.status_code -ne 200 -or
+    $Response.content_type -ne $ExpectedContentType -or
+    [int64]$Response.content_length -ne [int64]$ExpectedBytes.Length -or
+    [int64]$Response.body_length -ne [int64]$ExpectedBytes.Length -or
+    [string]$Response.body_sha256 -ne $expectedHash) {
+    throw "$Name HTTP response failed exact contract (status=$($Response.status_code); content_type=$($Response.content_type); content_length=$($Response.content_length); body_length=$($Response.body_length); body_sha256=$($Response.body_sha256))"
+  }
+  return [ordered]@{
+    status = 'PASS'
+    status_code = [int]$Response.status_code
+    content_type = [string]$Response.content_type
+    content_length = [int64]$Response.content_length
+    body_length = [int64]$Response.body_length
+    body_sha256 = [string]$Response.body_sha256
+  }
+}
+
+function Write-HttpEvidence([string]$Status) {
+  try {
+    $requests = @()
+    if (Test-Path -LiteralPath $requestLogPath -PathType Leaf) {
+      $requests = @(Get-Content -LiteralPath $requestLogPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ | ConvertFrom-Json })
+    }
+    $proxy = [ordered]@{
+      http_proxy_set = @('HTTP_PROXY', 'http_proxy') | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+      } | Select-Object -First 1 | ForEach-Object { $true }
+      https_proxy_set = @('HTTPS_PROXY', 'https_proxy') | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+      } | Select-Object -First 1 | ForEach-Object { $true }
+      no_proxy_set = @('NO_PROXY', 'no_proxy') | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+      } | Select-Object -First 1 | ForEach-Object { $true }
+      loopback_client_proxy_disabled = $true
+    }
+    foreach ($proxyName in @('http_proxy_set', 'https_proxy_set', 'no_proxy_set')) {
+      if ($null -eq $proxy[$proxyName]) { $proxy[$proxyName] = $false }
+    }
+    $evidence = [ordered]@{
+      schema_version = 1
+      status = $Status
+      port = [int]$port
+      proxy_environment = $proxy
+      manifest = $manifestContract
+      candidate = $candidateContract
+      requests = $requests
+    }
+    $parent = Split-Path -Parent $httpEvidencePath
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    [IO.File]::WriteAllText($httpEvidencePath, ($evidence | ConvertTo-Json -Depth 12) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+  } catch {
+    Write-Warning 'Could not persist sanitized fixture HTTP evidence'
+  }
+}
 
 function Wait-ForPath {
   param([string]$Path, [int]$TimeoutSeconds = 180)
@@ -112,8 +230,10 @@ function Invoke-FixtureBuild {
   $env:TAURI_SIGNING_PRIVATE_KEY = $privateKey
   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
   $oldCargoTargetDir = [Environment]::GetEnvironmentVariable('CARGO_TARGET_DIR', 'Process')
+  $oldFixturePort = [Environment]::GetEnvironmentVariable('SKY_TAURI_UPDATE_FIXTURE_PORT', 'Process')
   try {
     [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', $fixtureTargetRoot, 'Process')
+    [Environment]::SetEnvironmentVariable('SKY_TAURI_UPDATE_FIXTURE_PORT', [string]$port, 'Process')
     Push-Location $desktopRoot
     try {
       & bun run tauri build --ci --config $ConfigPath -- --profile dist --features tauri-update-fixture
@@ -127,6 +247,11 @@ function Invoke-FixtureBuild {
     } else {
       [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', $oldCargoTargetDir, 'Process')
     }
+    if ($null -eq $oldFixturePort) {
+      [Environment]::SetEnvironmentVariable('SKY_TAURI_UPDATE_FIXTURE_PORT', $null, 'Process')
+    } else {
+      [Environment]::SetEnvironmentVariable('SKY_TAURI_UPDATE_FIXTURE_PORT', $oldFixturePort, 'Process')
+    }
     Remove-Item Env:SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS -ErrorAction SilentlyContinue
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
@@ -134,7 +259,9 @@ function Invoke-FixtureBuild {
 }
 
 try {
+  $port = Get-DisposableLoopbackPort
   New-Item -ItemType Directory -Path $fixtureRoot, $installRoot -Force | Out-Null
+  New-Item -ItemType File -Path $requestLogPath -Force | Out-Null
   New-Item -ItemType Directory -Path $fixtureBundleRoot -Force | Out-Null
   $fixtureBundleRoot = (Resolve-Path -LiteralPath $fixtureBundleRoot -ErrorAction Stop).Path
 
@@ -150,8 +277,8 @@ try {
 
   Push-Location $desktopRoot
   try {
-    bun run tauri signer generate --ci --password '' --force -w $oldKeyPath | Out-Null
-    bun run tauri signer generate --ci --password '' --force -w $newKeyPath | Out-Null
+    bun run tauri signer generate --ci --password '' --force -w $oldKeyPath *> $null
+    bun run tauri signer generate --ci --password '' --force -w $newKeyPath *> $null
   } finally {
     Pop-Location
   }
@@ -222,7 +349,7 @@ try {
     Copy-Item -LiteralPath $candidateArchive.FullName -Destination $candidateForOldSigningPath -Force
     Push-Location $desktopRoot
     try {
-      bun run tauri signer sign --private-key-path $oldKeyPath --password '' $candidateForOldSigningPath | Out-Null
+      bun run tauri signer sign --private-key-path $oldKeyPath --password '' $candidateForOldSigningPath *> $null
     } finally {
       Pop-Location
     }
@@ -260,7 +387,7 @@ try {
 
   $archivePath = $candidateArchive.FullName
   $serverJob = Start-Job -ScriptBlock {
-    param($Port, $ManifestPath, $ArchivePath, $StopPath)
+    param($Port, $ManifestPath, $ArchivePath, $StopPath, $RequestLogPath)
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse('127.0.0.1'), $Port)
     $listener.Start()
     try {
@@ -275,7 +402,10 @@ try {
           $requestBytes = [byte[]]::new(8192)
           $read = $stream.Read($requestBytes, 0, $requestBytes.Length)
           $request = [Text.Encoding]::ASCII.GetString($requestBytes, 0, $read)
-          $path = ($request -split "`r?`n", 2)[0].Split(' ')[1].Split('?')[0]
+          $requestLine = ($request -split "`r?`n", 2)[0]
+          $requestParts = $requestLine.Split(' ')
+          $method = if ($requestParts.Count -gt 0) { $requestParts[0] } else { '' }
+          $path = if ($requestParts.Count -gt 1) { $requestParts[1].Split('?')[0] } else { '' }
           if ($path -eq '/stable' -or $path -eq '/beta') {
             $bytes = [IO.File]::ReadAllBytes($ManifestPath)
             $contentType = 'application/json'
@@ -289,6 +419,15 @@ try {
             $contentType = 'text/plain'
             $status = '404 Not Found'
           }
+          $requestEvidence = [ordered]@{
+            method = $method
+            path = $path
+            status_code = [int]$status.Split(' ')[0]
+            content_type = $contentType
+            content_length = [int64]$bytes.Length
+            body_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          }
+          [IO.File]::AppendAllText($RequestLogPath, (($requestEvidence | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
           $header = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`nContent-Type: $contentType`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
           $stream.Write($header, 0, $header.Length)
           $stream.Write($bytes, 0, $bytes.Length)
@@ -301,7 +440,7 @@ try {
     } finally {
       $listener.Stop()
     }
-  } -ArgumentList $port, $manifestPath, $archivePath, $stopPath
+  } -ArgumentList $port, $manifestPath, $archivePath, $stopPath, $requestLogPath
 
   $serverReady = $false
   $serverDeadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -316,6 +455,36 @@ try {
     $serverOutput = Receive-Job -Job $serverJob -Keep | Out-String
     throw "Local signed updater fixture did not become ready. Server job output: $serverOutput"
   }
+
+  $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+  $manifestDocument = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $manifestPlatform = $manifestDocument.platforms.'windows-x86_64-nsis'
+  $expectedCandidateUrl = "http://127.0.0.1:$port/candidate/update.exe"
+  if ($null -eq $manifestPlatform -or
+    [string]$manifestDocument.version -ne $candidateVersion -or
+    [string]$manifestPlatform.url -ne $expectedCandidateUrl -or
+    [string]::IsNullOrWhiteSpace([string]$manifestPlatform.signature)) {
+    throw 'Fixture release manifest failed the Tauri-compatible schema contract'
+  }
+  $manifestResponse = Invoke-LoopbackHttpBytes "http://127.0.0.1:$port/stable"
+  $manifestHttp = Assert-ExactHttpResponse $manifestResponse $manifestBytes 'application/json' 'fixture release manifest'
+  $manifestContract = [ordered]@{
+    status = 'PASS'
+    schema_status = 'PASS'
+    version = [string]$manifestDocument.version
+    platform = 'windows-x86_64-nsis'
+    candidate_url = [string]$manifestPlatform.url
+    signature_present = $true
+    http = $manifestHttp
+  }
+  $candidateBytes = [IO.File]::ReadAllBytes($candidateArchive.FullName)
+  $candidateResponse = Invoke-LoopbackHttpBytes $expectedCandidateUrl
+  $candidateContract = [ordered]@{
+    status = 'PASS'
+    http = Assert-ExactHttpResponse $candidateResponse $candidateBytes 'application/octet-stream' 'fixture candidate artifact'
+  }
+  Write-Host "Fixture HTTP manifest contract: PASS (status=200; content-type=application/json; content-length=$($manifestHttp.content_length); body-sha256=$($manifestHttp.body_sha256))"
+  Write-Host "Fixture HTTP candidate contract: PASS (status=200; content-type=application/octet-stream; content-length=$($candidateContract.http.content_length); body-sha256=$($candidateContract.http.body_sha256))"
 
   $installerRun = Start-Process -FilePath $previousInstallerCopy -ArgumentList @('/S', "/D=$installRoot") -WindowStyle Hidden -Wait -PassThru
   if ($installerRun.ExitCode -ne 0) { throw "Bridge-v4 installer exited with $($installerRun.ExitCode)" }
@@ -368,6 +537,7 @@ try {
     "Packaged Tauri updater rotation: PASS (bridge [old,new] applied new-root-only $candidateVersion; cutover [new] rejected old-root-only $cutoverVersion; safety phases=$($requiredPhases -join ', '))" |
       Add-Content $summaryPath -Encoding UTF8
   }
+  $fixtureStatus = 'PASS'
 } finally {
   if ($null -ne $serverJob) {
     New-Item -ItemType File -Path $stopPath -Force | Out-Null
@@ -379,6 +549,7 @@ try {
   Remove-Item Env:SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS -ErrorAction SilentlyContinue
   Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
   Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+  Write-HttpEvidence $fixtureStatus
   if (-not $KeepFixtureOnFailure -and (Test-Path -LiteralPath $fixtureRoot)) {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
   }

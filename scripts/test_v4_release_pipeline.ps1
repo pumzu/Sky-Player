@@ -31,7 +31,14 @@ foreach ($marker in @(
     "FixtureTargetDir",
     "CARGO_TARGET_DIR",
     "dist/bundle/nsis",
-    "Downloaded candidate paths must remain outside the throwaway fixture target directory"
+    "Downloaded candidate paths must remain outside the throwaway fixture target directory",
+    "Get-DisposableLoopbackPort",
+    "SKY_TAURI_UPDATE_FIXTURE_PORT",
+    "Assert-ExactHttpResponse",
+    "fixture-http-evidence.json",
+    "body_sha256",
+    "windows-x86_64-nsis",
+    "/candidate/update.exe"
 )) {
     if (-not $fixtureCore.Contains($marker)) {
         Fail "updater fixture topology marker is missing: $marker"

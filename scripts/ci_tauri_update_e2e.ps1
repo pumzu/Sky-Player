@@ -6,6 +6,7 @@ param(
   [string]$CandidateSignaturePath,
   [string]$CandidateVersion,
   [string]$CandidatePublicKeyPath,
+  [string]$EvidencePath,
   [switch]$KeepFixtureOnFailure
 )
 
@@ -63,6 +64,9 @@ foreach ($name in @('CandidateInstallerPath', 'CandidateSignaturePath', 'Candida
   if ($PSBoundParameters.ContainsKey($name)) {
     $invokeArgs[$name] = Get-Variable -Name $name -ValueOnly
   }
+}
+if ($PSBoundParameters.ContainsKey('EvidencePath')) {
+  $invokeArgs['EvidencePath'] = $EvidencePath
 }
 if ($KeepFixtureOnFailure) {
   $invokeArgs['KeepFixtureOnFailure'] = $true

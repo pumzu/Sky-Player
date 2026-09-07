@@ -604,7 +604,8 @@ function Invoke-QualifyDownloaded {
         "-CandidateInstallerPath", (Join-Path $bundle $sourceInstaller),
         "-CandidateSignaturePath", (Join-Path $bundle $sourceSignature),
         "-CandidateVersion", $Version,
-        "-CandidatePublicKeyPath", $canonicalPublicKey
+        "-CandidatePublicKeyPath", $canonicalPublicKey,
+        "-EvidencePath", (Join-Path $root "fixture-http-evidence.json")
     ) "exact downloaded previous-v4 to candidate-v4 updater qualification failed"
 
     # Production policy requires a deterministic exact-artifact Defender
