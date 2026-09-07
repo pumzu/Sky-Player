@@ -742,11 +742,10 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
     }
     for marker in [
         "name: Packaged v4 updater fixture qualification",
-        "CARGO_TARGET_DIR",
         "tauri-update-fixture",
         "dangerousInsecureTransportProtocol",
         "scripts/ci_tauri_update_e2e.ps1",
-        "-BundleDir",
+        "FixtureTargetDir",
         "RUNNER_TEMP",
     ] {
         if !fixture.contains(marker) {
@@ -3231,13 +3230,10 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
   updater_e2e:
     name: Packaged v4 updater fixture qualification
     needs: [changes, static, release_authority, supply_chain, validate]
-    env:
-      RUNNER_TEMP: runner-temp
-      CARGO_TARGET_DIR: runner-temp
     steps:
       - run: dangerousInsecureTransportProtocol = true
       - run: bun run tauri build --features tauri-update-fixture
-      - run: pwsh scripts/ci_tauri_update_e2e.ps1 -BundleDir runner-temp
+      - run: $fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"; pwsh scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir $fixtureTarget
   packaged:
     name: Packaged v4 Tauri NSIS qualification
     needs: [changes, static, release_authority, supply_chain, validate]

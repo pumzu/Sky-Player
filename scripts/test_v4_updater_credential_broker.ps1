@@ -360,14 +360,19 @@ exit 0
     $dummyKeyPath = Join-Path $fixtureRoot "test.key"
     New-Item -ItemType File -Path $dummyKeyPath -Force | Out-Null
     $currentHeadSha = (git -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+    $cargoSource = Get-Content -LiteralPath (Join-Path $repoRoot "desktop/src-tauri/Cargo.toml") -Raw
+    if ($cargoSource -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+        Fail "Could not determine the current desktop package version for the ambient environment test"
+    }
+    $currentVersion = $Matches[1]
     try {
         $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "ambient-forbidden-value"
         $pipelineOutput = & pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
             -File (Join-Path $PSScriptRoot "v4_release_pipeline.ps1") `
             -State BuildCandidate `
-            -Version "4.0.0-rc.1" `
+            -Version $currentVersion `
             -Channel "beta" `
-            -Tag "v4.0.0-rc.1" `
+            -Tag "v$currentVersion" `
             -SourceSha $currentHeadSha `
             -WorkflowSha $currentHeadSha `
             -StateRoot (Join-Path ([IO.Path]::GetTempPath()) ("state-" + [guid]::NewGuid().ToString("N"))) `

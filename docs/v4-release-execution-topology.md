@@ -284,8 +284,10 @@ Step 8: Evidence Emission & Self-Validation
 ### 3.3 Dedicated v4 release state machine
 
 The manual production entry point is `.github/workflows/release-v4.yml`. It
-accepts an explicit version, channel, `v<version>` tag, source SHA, external
-updater-key path, notes path, and UTC publication timestamp. The workflow
+accepts an explicit version, channel, `v<version>` tag, source SHA, notes path,
+and UTC publication timestamp. The dedicated runner supplies the external key
+path through its runner-local `V4_UPDATER_PRIVATE_KEY_PATH` process environment;
+the path is not a workflow-dispatch input. The workflow
 requires the checked-out commit and workflow SHA to equal the requested source
 SHA, then executes these fail-closed states:
 
@@ -310,6 +312,20 @@ runs at this post-download boundary: a throwaway previous-v4 bridge consumes
 the exact downloaded installer and `.sig`, while the production candidate is
 never rebuilt. The packaged candidate also proves that update admission is
 rejected while playback is active.
+
+Before creating a new RC, the exact production qualification topology can be
+rehearsed without creating a release-authority draft:
+
+```powershell
+pwsh scripts/test_v4_production_topology_rehearsal.ps1 -CandidateStateRoot $candidateStateRoot -StateRoot (Join-Path $env:RUNNER_TEMP "sky-v4-production-topology-rehearsal") -Version $version -Channel $channel -Tag "v$version" -SourceSha $sourceSha -WorkflowSha $sourceSha
+```
+
+The rehearsal stages the already-qualified candidate bytes under the same
+`downloaded` state layout and invokes
+`v4_release_pipeline.ps1 -State QualifyDownloaded` with the production
+identity parameters. Its throwaway updater bridge builds into a separate
+`FixtureTargetDir\dist\bundle\nsis`; it never searches for a downloaded
+candidate inside that build output.
 
 The same post-download qualification invokes a bounded Windows Defender
 custom scan against the exact downloaded installer and records the artifact

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$BundleDir,
+  [string]$FixtureTargetDir,
   [string]$CandidateInstallerPath,
   [string]$CandidateSignaturePath,
   [string]$CandidateVersion,
@@ -25,6 +25,13 @@ $summaryPath = if ([string]::IsNullOrWhiteSpace($env:GITHUB_STEP_SUMMARY)) {
   $env:GITHUB_STEP_SUMMARY
 }
 $fixtureRoot = Join-Path $runnerTemp ('sky-auto-player-tauri-update-' + [guid]::NewGuid().ToString('N'))
+$fixtureTargetRoot = [IO.Path]::GetFullPath($FixtureTargetDir)
+$repoPrefix = $repoRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+if ($fixtureTargetRoot.Equals($repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
+  $fixtureTargetRoot.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+  throw 'Updater fixture target directory must be outside the repository workspace'
+}
+$fixtureBundleRoot = Join-Path $fixtureTargetRoot 'dist/bundle/nsis'
 $installRoot = Join-Path $fixtureRoot 'installed'
 $markerPath = Join-Path $fixtureRoot 'completion.txt'
 $cutoverMarkerPath = Join-Path $fixtureRoot 'cutover.txt'
@@ -104,7 +111,9 @@ function Invoke-FixtureBuild {
   $env:SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS = $PublicRoots
   $env:TAURI_SIGNING_PRIVATE_KEY = $privateKey
   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
+  $oldCargoTargetDir = [Environment]::GetEnvironmentVariable('CARGO_TARGET_DIR', 'Process')
   try {
+    [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', $fixtureTargetRoot, 'Process')
     Push-Location $desktopRoot
     try {
       & bun run tauri build --ci --config $ConfigPath -- --profile dist --features tauri-update-fixture
@@ -113,6 +122,11 @@ function Invoke-FixtureBuild {
       Pop-Location
     }
   } finally {
+    if ($null -eq $oldCargoTargetDir) {
+      [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', $null, 'Process')
+    } else {
+      [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', $oldCargoTargetDir, 'Process')
+    }
     Remove-Item Env:SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS -ErrorAction SilentlyContinue
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
@@ -121,8 +135,18 @@ function Invoke-FixtureBuild {
 
 try {
   New-Item -ItemType Directory -Path $fixtureRoot, $installRoot -Force | Out-Null
-  New-Item -ItemType Directory -Path $BundleDir -Force | Out-Null
-  $bundleRoot = (Resolve-Path -LiteralPath $BundleDir -ErrorAction Stop).Path
+  New-Item -ItemType Directory -Path $fixtureBundleRoot -Force | Out-Null
+  $fixtureBundleRoot = (Resolve-Path -LiteralPath $fixtureBundleRoot -ErrorAction Stop).Path
+
+  foreach ($candidatePath in @($CandidateInstallerPath, $CandidateSignaturePath)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidatePath)) {
+      $resolvedCandidatePath = [IO.Path]::GetFullPath($candidatePath)
+      $fixturePrefix = $fixtureTargetRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+      if ($resolvedCandidatePath.StartsWith($fixturePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Downloaded candidate paths must remain outside the throwaway fixture target directory'
+      }
+    }
+  }
 
   Push-Location $desktopRoot
   try {
@@ -155,7 +179,7 @@ try {
   # qualification the candidate below is the exact installer and signature
   # downloaded from the release draft; it is never rebuilt by this fixture.
   Invoke-FixtureBuild $bridgeConfigPath $oldKeyPath "$oldPublicKey|$newPublicKey"
-  $previousInstallers = @(Get-ChildItem -LiteralPath $bundleRoot -Filter '*4.0.0-alpha.1_x64-setup.exe' -File)
+  $previousInstallers = @(Get-ChildItem -LiteralPath $fixtureBundleRoot -Filter '*4.0.0-alpha.1_x64-setup.exe' -File)
   if ($previousInstallers.Count -ne 1) {
     throw "Expected exactly one bridge-v4 installer, found $($previousInstallers.Count)"
   }
@@ -181,7 +205,7 @@ try {
     [IO.File]::WriteAllText($lockPath, $lockCandidate, [Text.UTF8Encoding]::new($false))
     Invoke-FixtureBuild $cutoverConfigPath $newKeyPath $newPublicKey
 
-    $candidateArchives = @(Get-ChildItem -LiteralPath $bundleRoot -Filter "*${candidateVersion}*-setup.exe" -File)
+    $candidateArchives = @(Get-ChildItem -LiteralPath $fixtureBundleRoot -Filter ("*" + $candidateVersion + "*-setup.exe") -File)
     if ($candidateArchives.Count -ne 1) {
       throw "Expected exactly one new-root candidate installer, found $($candidateArchives.Count)"
     }

@@ -542,22 +542,16 @@ jobs:
       - name: Exercise non-production updater key rotation fixture
         run: pwsh scripts/test_v4_updater_key_rotation.ps1
 
-      - name: Configure isolated updater fixture target
-        run: |
-          $fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"
-          New-Item -ItemType Directory -Path $fixtureTarget -Force | Out-Null
-          "CARGO_TARGET_DIR=$fixtureTarget" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-
       - name: Build throwaway signed fixture and qualify packaged Tauri updater rotation
         env:
           RUSTUP_TOOLCHAIN: 1.98.0
         run: |
-          $fixtureTarget = $env:CARGO_TARGET_DIR
-          $fixtureBundle = Join-Path $fixtureTarget "dist/bundle/nsis"
+          $fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"
+          New-Item -ItemType Directory -Path $fixtureTarget -Force | Out-Null
           # Packaged Tauri updater rotation: ci_tauri_update_e2e.ps1 sets SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS
           # separately for the bridge [old,new] and cutover [new] tauri-update-fixture builds.
           # Its generated configs alone enable dangerousInsecureTransportProtocol on loopback.
-          pwsh scripts/ci_tauri_update_e2e.ps1 -BundleDir $fixtureBundle
+          pwsh scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir $fixtureTarget
 
       - name: Clean up ephemeral Authenticode test certificate
         if: always()

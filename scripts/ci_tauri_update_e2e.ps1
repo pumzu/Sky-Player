@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$BundleDir,
+  [string]$FixtureTargetDir,
   [string]$CandidateInstallerPath,
   [string]$CandidateSignaturePath,
   [string]$CandidateVersion,
@@ -58,7 +58,7 @@ if ((Convert-FixtureCargoVersion -Source $syntheticCargo -Version $previousVersi
 & (Join-Path $PSScriptRoot 'test_v4_updater_fixture_server.ps1')
 
 
-$invokeArgs = @{ BundleDir = $BundleDir }
+$invokeArgs = @{ FixtureTargetDir = $FixtureTargetDir }
 foreach ($name in @('CandidateInstallerPath', 'CandidateSignaturePath', 'CandidateVersion', 'CandidatePublicKeyPath')) {
   if ($PSBoundParameters.ContainsKey($name)) {
     $invokeArgs[$name] = Get-Variable -Name $name -ValueOnly

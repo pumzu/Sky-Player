@@ -7,14 +7,50 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pipelinePath = Join-Path $PSScriptRoot "v4_release_pipeline.ps1"
 $rehearsalPath = Join-Path $PSScriptRoot "test_v4_release_authority_rehearsal.ps1"
+$topologyRehearsalPath = Join-Path $PSScriptRoot "test_v4_production_topology_rehearsal.ps1"
+$fixtureWrapperPath = Join-Path $PSScriptRoot "ci_tauri_update_e2e.ps1"
+$fixtureCorePath = Join-Path $PSScriptRoot "ci_tauri_update_e2e_core.ps1"
 $uploadHelperPath = Join-Path $PSScriptRoot "v4_release_authority_upload.ps1"
 $workflowPath = Join-Path $repoRoot ".github/workflows/release-v4.yml"
 $pipeline = Get-Content -LiteralPath $pipelinePath -Raw
 $rehearsal = Get-Content -LiteralPath $rehearsalPath -Raw
+$topologyRehearsal = Get-Content -LiteralPath $topologyRehearsalPath -Raw
+$fixtureWrapper = Get-Content -LiteralPath $fixtureWrapperPath -Raw
+$fixtureCore = Get-Content -LiteralPath $fixtureCorePath -Raw
 $uploadHelper = Get-Content -LiteralPath $uploadHelperPath -Raw
 $workflow = Get-Content -LiteralPath $workflowPath -Raw
 
 function Fail([string]$Message) { throw "FAILED: $Message" }
+
+if ($fixtureWrapper.Contains("BundleDir") -or $fixtureCore.Contains("BundleDir")) {
+    Fail "updater fixture must not use the ambiguous BundleDir contract"
+}
+foreach ($marker in @(
+    "FixtureTargetDir",
+    "CARGO_TARGET_DIR",
+    "dist/bundle/nsis",
+    "Downloaded candidate paths must remain outside the throwaway fixture target directory"
+)) {
+    if (-not $fixtureCore.Contains($marker)) {
+        Fail "updater fixture topology marker is missing: $marker"
+    }
+}
+foreach ($marker in @(
+    '"-State", "QualifyDownloaded"',
+    '"-StateRoot", $effectiveStateRoot'
+)) {
+    if (-not $topologyRehearsal.Contains($marker)) {
+        Fail "production-topology rehearsal marker is missing: $marker"
+    }
+}
+if (-not $pipeline.Contains("FixtureTargetDir")) {
+    Fail "production qualification must pass an explicit fixture target directory"
+}
+if ($workflow.Contains("updater_private_key_path") -or
+    $workflow.Contains("inputs.updater_private_key_path") -or
+    $workflow.Contains("CARGO_TARGET_DIR=")) {
+    Fail "production workflow still carries a dispatch key path or ambient fixture target contract"
+}
 
 foreach ($script in @(
     [pscustomobject]@{ Name = "production release pipeline"; Source = $pipeline },

@@ -189,8 +189,9 @@ and publishing a new version; existing artifact bytes are never repaired in
 place.
 
 The isolated CI updater qualification runs
-`scripts/ci_tauri_update_e2e.ps1`. It serves the signed candidate from a
-loopback fixture, installs the previous v4 package, and verifies the official
+`scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir <runner-temp-target>`. The
+script owns the fixture `CARGO_TARGET_DIR` for each throwaway build and serves
+the signed candidate from a loopback fixture, installs the previous v4 package, and verifies the official
 Tauri updater reaches the candidate version after restart. It also verifies
 the bridge `[old,new]` to cutover `[new]` trust transition against real
 packaged clients. The same evidence records the ordered native quiesce,
