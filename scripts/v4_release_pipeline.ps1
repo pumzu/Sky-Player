@@ -365,15 +365,8 @@ function Assert-CandidateEvidence([object[]]$Records) {
 
 function Invoke-BuildCandidate {
     Assert-RequestIdentity
-    $runnerKeyPath = if ([string]::IsNullOrWhiteSpace($UpdaterPrivateKeyPath)) {
-        [Environment]::GetEnvironmentVariable("V4_UPDATER_PRIVATE_KEY_PATH", "Process")
-    } else {
-        $UpdaterPrivateKeyPath
-    }
-    if ([string]::IsNullOrWhiteSpace($runnerKeyPath)) {
-        Fail "updater private key path is unavailable; configure V4_UPDATER_PRIVATE_KEY_PATH on the dedicated release runner"
-    }
-    $keyPath = (Resolve-Path -LiteralPath $runnerKeyPath -ErrorAction Stop).Path
+    if ([string]::IsNullOrWhiteSpace($UpdaterPrivateKeyPath)) { Fail "updater private key path is required" }
+    $keyPath = (Resolve-Path -LiteralPath $UpdaterPrivateKeyPath -ErrorAction Stop).Path
     $repoPrefix = $repoRoot.TrimEnd("\", "/") + [IO.Path]::DirectorySeparatorChar
     if ($keyPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) { Fail "updater private key must remain outside workspace" }
     if (-not (Test-Path -LiteralPath $keyPath -PathType Leaf)) { Fail "updater private key path is not a file" }

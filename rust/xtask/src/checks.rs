@@ -450,6 +450,9 @@ fn v4_release_pipeline_contract_source(
         "attestations: write",
         "V4_RELEASE_AUTHORITY_TOKEN",
         "ref: ${{ inputs.source_sha }}",
+        "updater_private_key_path:",
+        "inputs.updater_private_key_path",
+        "-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH",
         "persist-credentials: false",
         "actions/attest@",
         "actions/upload-artifact@",
@@ -595,10 +598,12 @@ fn v4_release_pipeline_contract_source(
 
 fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
     let workflow_path = root.join(".github/workflows/release-v4.yml");
+    let topology_workflow_path = root.join(".github/workflows/rehearse-v4-production-topology.yml");
     let pipeline_path = root.join("scripts/v4_release_pipeline.ps1");
     let regression_path = root.join("scripts/test_v4_release_pipeline.ps1");
     let pipeline = fs::read_to_string(&pipeline_path)?;
     let regression = fs::read_to_string(&regression_path)?;
+    let topology_workflow = fs::read_to_string(&topology_workflow_path)?;
     v4_release_pipeline_contract_source(
         &fs::read_to_string(&workflow_path)?,
         &pipeline,
@@ -607,6 +612,43 @@ fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
     .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> {
         format!("v4 release pipeline contract: {error}").into()
     })?;
+    for marker in [
+        "name: V4 Production Topology Rehearsal",
+        "workflow_dispatch:",
+        "runs-on: [self-hosted, windows, v4-release, single-tenant]",
+        "ref: ${{ inputs.source_sha }}",
+        "persist-credentials: false",
+        "updater_private_key_path:",
+        "BuildCandidate",
+        "test_v4_production_topology_rehearsal.ps1",
+        "-CandidateStateRoot $env:V4_REHEARSAL_STATE_ROOT",
+        "-StateRoot $env:V4_REHEARSAL_QUALIFICATION_STATE_ROOT",
+        "-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH",
+    ] {
+        if !topology_workflow.contains(marker) {
+            return Err(format!(
+                "production-topology rehearsal workflow is missing its required marker: {marker}"
+            )
+            .into());
+        }
+    }
+    for forbidden in [
+        "V4_RELEASE_AUTHORITY_TOKEN",
+        "ValidateAuthority",
+        "CreateDraft",
+        "PublishDraft",
+        "PromoteMetadata",
+        "FinalVerify",
+        "gh release",
+        "softprops/action-gh-release",
+    ] {
+        if topology_workflow.contains(forbidden) {
+            return Err(format!(
+                "production-topology rehearsal workflow contains an authority mutation marker: {forbidden}"
+            )
+            .into());
+        }
+    }
     for script_name in [
         "scripts/v4_updater_credential_broker.ps1",
         "scripts/set_v4_updater_session_credential.ps1",
@@ -3170,6 +3212,9 @@ jobs:
   release:
     runs-on: [self-hosted, windows, v4-release, single-tenant]
     ref: ${{ inputs.source_sha }}
+    updater_private_key_path:
+    inputs.updater_private_key_path
+    -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
     persist-credentials: false
     env: V4_RELEASE_AUTHORITY_TOKEN
     -State ValidateRequest

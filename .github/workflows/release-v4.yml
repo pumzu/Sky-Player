@@ -20,6 +20,10 @@ on:
         description: "Exact source commit SHA; must equal this workflow checkout and GITHUB_SHA"
         required: true
         type: string
+      updater_private_key_path:
+        description: "Path to the externally stored updater key on the dedicated runner"
+        required: true
+        type: string
       release_notes_path:
         description: "Bounded release notes file in the checked-out source"
         required: true
@@ -103,6 +107,8 @@ jobs:
         run: pwsh scripts/ci_require_windows_tools.ps1 -Tool cargo,rustc,rustup,git,bun,gh.exe
 
       - name: Build and qualify the single production candidate
+        env:
+          V4_UPDATER_PRIVATE_KEY_PATH: ${{ inputs.updater_private_key_path }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State BuildCandidate `
@@ -111,7 +117,8 @@ jobs:
             -Tag $env:V4_RELEASE_TAG `
             -SourceSha $env:V4_RELEASE_SOURCE_SHA `
             -WorkflowSha $env:V4_RELEASE_WORKFLOW_SHA `
-            -StateRoot $env:V4_RELEASE_STATE_ROOT
+            -StateRoot $env:V4_RELEASE_STATE_ROOT `
+            -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
 
       - name: Create exact candidate draft in release authority
         env:

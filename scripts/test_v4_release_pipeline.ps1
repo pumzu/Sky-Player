@@ -12,6 +12,7 @@ $fixtureWrapperPath = Join-Path $PSScriptRoot "ci_tauri_update_e2e.ps1"
 $fixtureCorePath = Join-Path $PSScriptRoot "ci_tauri_update_e2e_core.ps1"
 $uploadHelperPath = Join-Path $PSScriptRoot "v4_release_authority_upload.ps1"
 $workflowPath = Join-Path $repoRoot ".github/workflows/release-v4.yml"
+$topologyWorkflowPath = Join-Path $repoRoot ".github/workflows/rehearse-v4-production-topology.yml"
 $pipeline = Get-Content -LiteralPath $pipelinePath -Raw
 $rehearsal = Get-Content -LiteralPath $rehearsalPath -Raw
 $topologyRehearsal = Get-Content -LiteralPath $topologyRehearsalPath -Raw
@@ -19,6 +20,7 @@ $fixtureWrapper = Get-Content -LiteralPath $fixtureWrapperPath -Raw
 $fixtureCore = Get-Content -LiteralPath $fixtureCorePath -Raw
 $uploadHelper = Get-Content -LiteralPath $uploadHelperPath -Raw
 $workflow = Get-Content -LiteralPath $workflowPath -Raw
+$topologyWorkflow = Get-Content -LiteralPath $topologyWorkflowPath -Raw
 
 function Fail([string]$Message) { throw "FAILED: $Message" }
 
@@ -46,10 +48,17 @@ foreach ($marker in @(
 if (-not $pipeline.Contains("FixtureTargetDir")) {
     Fail "production qualification must pass an explicit fixture target directory"
 }
-if ($workflow.Contains("updater_private_key_path") -or
-    $workflow.Contains("inputs.updater_private_key_path") -or
-    $workflow.Contains("CARGO_TARGET_DIR=")) {
-    Fail "production workflow still carries a dispatch key path or ambient fixture target contract"
+foreach ($marker in @(
+    'updater_private_key_path:',
+    'inputs.updater_private_key_path',
+    '-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH'
+)) {
+    if (-not $workflow.Contains($marker)) {
+        Fail "production workflow key-path transport marker is missing: $marker"
+    }
+}
+if ($workflow.Contains("CARGO_TARGET_DIR=")) {
+    Fail "production workflow still carries an ambient fixture target contract"
 }
 
 foreach ($script in @(
@@ -244,6 +253,39 @@ foreach ($forbidden in @(
     'V4_RELEASE_STATE_ROOT: ${{ runner.temp }}'
 )) {
     if ($workflow.Contains($forbidden)) { Fail "forbidden production workflow marker remains: $forbidden" }
+}
+
+foreach ($marker in @(
+    'name: V4 Production Topology Rehearsal',
+    'workflow_dispatch:',
+    'runs-on: [self-hosted, windows, v4-release, single-tenant]',
+    'ref: ${{ inputs.source_sha }}',
+    'persist-credentials: false',
+    'updater_private_key_path:',
+    'BuildCandidate',
+    'test_v4_production_topology_rehearsal.ps1',
+    '-CandidateStateRoot $env:V4_REHEARSAL_STATE_ROOT',
+    'Execute exact production QualifyDownloaded topology',
+    '-StateRoot $env:V4_REHEARSAL_QUALIFICATION_STATE_ROOT',
+    '-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH'
+)) {
+    if (-not $topologyWorkflow.Contains($marker)) {
+        Fail "production-topology rehearsal workflow marker is missing: $marker"
+    }
+}
+foreach ($forbidden in @(
+    'V4_RELEASE_AUTHORITY_TOKEN',
+    'ValidateAuthority',
+    'CreateDraft',
+    'PublishDraft',
+    'PromoteMetadata',
+    'FinalVerify',
+    'gh release',
+    'softprops/action-gh-release'
+)) {
+    if ($topologyWorkflow.Contains($forbidden)) {
+        Fail "production-topology rehearsal workflow contains an authority mutation marker: $forbidden"
+    }
 }
 $stateRootInit = $workflow.IndexOf('- name: Initialize release state root', [StringComparison]::Ordinal)
 $checkout = $workflow.IndexOf('- name: Check out the exact requested source SHA', [StringComparison]::Ordinal)

@@ -285,9 +285,7 @@ Step 8: Evidence Emission & Self-Validation
 
 The manual production entry point is `.github/workflows/release-v4.yml`. It
 accepts an explicit version, channel, `v<version>` tag, source SHA, notes path,
-and UTC publication timestamp. The dedicated runner supplies the external key
-path through its runner-local `V4_UPDATER_PRIVATE_KEY_PATH` process environment;
-the path is not a workflow-dispatch input. The workflow
+external updater-key path, and UTC publication timestamp. The workflow
 requires the checked-out commit and workflow SHA to equal the requested source
 SHA, then executes these fail-closed states:
 
@@ -314,7 +312,12 @@ never rebuilt. The packaged candidate also proves that update admission is
 rejected while playback is active.
 
 Before creating a new RC, the exact production qualification topology can be
-rehearsed without creating a release-authority draft:
+rehearsed without creating a release-authority draft. The manual workflow
+`.github/workflows/rehearse-v4-production-topology.yml` must be dispatched from
+the ref containing the exact requested source SHA. It uses the same dedicated
+runner labels and explicit updater-key path as production, builds one candidate,
+then runs the script below. It has no release-authority token and no authority
+mutation state.
 
 ```powershell
 pwsh scripts/test_v4_production_topology_rehearsal.ps1 -CandidateStateRoot $candidateStateRoot -StateRoot (Join-Path $env:RUNNER_TEMP "sky-v4-production-topology-rehearsal") -Version $version -Channel $channel -Tag "v$version" -SourceSha $sourceSha -WorkflowSha $sourceSha

@@ -1,0 +1,94 @@
+name: V4 Production Topology Rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Canonical v4 SemVer of the candidate to rehearse"
+        required: true
+        type: string
+      channel:
+        description: "v4 metadata channel"
+        required: true
+        type: choice
+        options: [stable, beta]
+      tag:
+        description: "Candidate tag; must be exactly v<version>"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact source commit SHA; must equal this workflow checkout and GITHUB_SHA"
+        required: true
+        type: string
+      updater_private_key_path:
+        description: "Path to the externally stored updater key on the dedicated runner"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v4-production-topology-rehearsal-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  rehearsal:
+    name: V4 production-topology rehearsal
+    # This is the same dedicated/single-tenant runner class used by production.
+    runs-on: [self-hosted, windows, v4-release, single-tenant]
+    env:
+      V4_REHEARSAL_VERSION: ${{ inputs.version }}
+      V4_REHEARSAL_CHANNEL: ${{ inputs.channel }}
+      V4_REHEARSAL_TAG: ${{ inputs.tag }}
+      V4_REHEARSAL_SOURCE_SHA: ${{ inputs.source_sha }}
+      V4_REHEARSAL_WORKFLOW_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Initialize isolated rehearsal state roots
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw "RUNNER_TEMP is unavailable" }
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_RUN_ID)) { throw "GITHUB_RUN_ID is unavailable" }
+          $base = Join-Path $env:RUNNER_TEMP ("sky-v4-production-topology-rehearsal-" + $env:GITHUB_RUN_ID)
+          "V4_REHEARSAL_STATE_ROOT=$base\candidate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V4_REHEARSAL_QUALIFICATION_STATE_ROOT=$base\qualification" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check out the exact requested source SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify dedicated runner tools
+        run: pwsh scripts/ci_require_windows_tools.ps1 -Tool cargo,rustc,rustup,git,bun,gh.exe
+
+      - name: Build one non-production candidate with the production builder
+        env:
+          V4_UPDATER_PRIVATE_KEY_PATH: ${{ inputs.updater_private_key_path }}
+        run: |
+          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
+            -State BuildCandidate `
+            -Version $env:V4_REHEARSAL_VERSION `
+            -Channel $env:V4_REHEARSAL_CHANNEL `
+            -Tag $env:V4_REHEARSAL_TAG `
+            -SourceSha $env:V4_REHEARSAL_SOURCE_SHA `
+            -WorkflowSha $env:V4_REHEARSAL_WORKFLOW_SHA `
+            -StateRoot $env:V4_REHEARSAL_STATE_ROOT `
+            -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
+
+      - name: Execute exact production QualifyDownloaded topology
+        run: |
+          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_topology_rehearsal.ps1 `
+            -CandidateStateRoot $env:V4_REHEARSAL_STATE_ROOT `
+            -StateRoot $env:V4_REHEARSAL_QUALIFICATION_STATE_ROOT `
+            -Version $env:V4_REHEARSAL_VERSION `
+            -Channel $env:V4_REHEARSAL_CHANNEL `
+            -Tag $env:V4_REHEARSAL_TAG `
+            -SourceSha $env:V4_REHEARSAL_SOURCE_SHA `
+            -WorkflowSha $env:V4_REHEARSAL_WORKFLOW_SHA `
+            -KeepStateOnFailure
