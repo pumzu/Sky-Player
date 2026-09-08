@@ -733,7 +733,7 @@ fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
 
 fn packaged_ci_contract_source(source: &str) -> Result<()> {
     let normalized = source.replace("\r\n", "\n");
-    let package_needs = "needs: [changes, static, validate]";
+    let package_needs = "needs: [changes, static]";
     let fixture_start = normalized
         .find("  updater_e2e:\n")
         .ok_or("CI workflow is missing the isolated updater fixture job")?;
@@ -2866,7 +2866,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
       - run: cargo xtask check rust
   updater_e2e:
     name: Updater fixture qualification
-    needs: [changes, static, validate]
+    needs: [changes, static]
     if: needs.changes.outputs.updater_required == 'true'
     steps:
       - run: dangerousInsecureTransportProtocol = true
@@ -2874,7 +2874,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
       - run: $fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"; pwsh scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir $fixtureTarget
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, validate]
+    needs: [changes, static]
     steps:
       - name: Resolve GitHub CLI for artifact attestation verification
         run: Get-Command gh.exe -CommandType Application; SKY_GH_PATH=$ghPath
@@ -2937,8 +2937,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
         assert!(packaged_ci_contract_source(source).is_ok());
         let crlf_source = source.replace('\n', "\r\n");
         assert!(packaged_ci_contract_source(&crlf_source).is_ok());
-        let unblocked_package_jobs =
-            source.replace("needs: [changes, static, validate]", "needs: changes");
+        let unblocked_package_jobs = source.replace("needs: [changes, static]", "needs: changes");
         assert!(packaged_ci_contract_source(&unblocked_package_jobs).is_err());
         for forbidden in [
             "tauri-update-fixture",
@@ -2972,7 +2971,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
       - run: cargo xtask check rust
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, validate]
+    needs: [changes, static]
     steps:
       - run: bun install --frozen-lockfile
       - run: bun run build

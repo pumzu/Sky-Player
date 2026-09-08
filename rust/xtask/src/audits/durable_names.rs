@@ -16,7 +16,7 @@ const HISTORICAL_PREFIXES: &[&str] = &[
     "docs/evidence/desktop-phase",
     "tests/test_phase",
 ];
-const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "__pycache__"];
+const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "target", "dist"];
 
 fn is_historical(path: &str) -> bool {
     HISTORICAL_PREFIXES
@@ -69,9 +69,10 @@ fn files(root: &Path) -> Vec<PathBuf> {
                 .follow_links(false)
                 .into_iter()
                 .filter_entry(|entry| {
-                    !entry.file_name().to_str().is_some_and(|name| {
-                        IGNORED_DIRS.contains(&name) || name.ends_with(".egg-info")
-                    })
+                    !entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| IGNORED_DIRS.contains(&name))
                 })
                 .filter_map(std::result::Result::ok)
                 .filter(|entry| entry.file_type().is_file())

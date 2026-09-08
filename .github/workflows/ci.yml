@@ -191,7 +191,7 @@ jobs:
         run: rustup toolchain install 1.98.0 --profile minimal
 
       - name: Set up Bun for release contract tests
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c624218d6 # v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
 
@@ -210,14 +210,10 @@ jobs:
         run: pwsh scripts/test_v4_release_pipeline.ps1
 
       - name: Run V4 production release orchestrator contract test
-        run: |
-          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_orchestrator.ps1
-          if ($LASTEXITCODE -ne 0) { throw "V4 production release orchestrator contract test failed with exit code $LASTEXITCODE" }
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_orchestrator.ps1
 
       - name: Run V4 updater private-key verifier secret-output regression
-        run: |
-          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_updater_private_key.ps1
-          if ($LASTEXITCODE -ne 0) { throw "V4 updater private-key verifier regression failed with exit code $LASTEXITCODE" }
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_updater_private_key.ps1
 
       - name: Report CI timing
         if: always()
@@ -424,7 +420,7 @@ jobs:
 
   updater_e2e:
     name: Updater fixture qualification
-    needs: [changes, static, validate]
+    needs: [changes, static]
     if: needs.changes.outputs.updater_required == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
@@ -522,7 +518,7 @@ jobs:
 
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, validate]
+    needs: [changes, static]
     if: needs.changes.outputs.package_required == 'true'
     runs-on: windows-latest
     timeout-minutes: 90

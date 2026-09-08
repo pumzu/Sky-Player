@@ -46,7 +46,6 @@ const SECURITY_OWNED_SURFACES: &[&str] = &[
 const SCAN_ROOTS: &[&str] = &["src", "rust", "tests", "scripts", "docs", ".github", "site"];
 const GENERATED_DIRS: &[&str] = &[
     ".git",
-    ".venv",
     ".astro",
     ".cache",
     "node_modules",
