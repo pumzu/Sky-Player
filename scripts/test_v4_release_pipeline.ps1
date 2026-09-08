@@ -255,7 +255,8 @@ foreach ($marker in @(
     'v4_updater_credential_broker.ps1',
     'docs/releases/v$Version.md',
     'release notes path must match the requested version',
-    'release notes heading must match the requested version'
+    'release notes heading must match the requested version',
+    '(?m)^# [^\r\n]+(?=\r?$)'
 )) {
     if (-not $pipeline.Contains($marker)) { Fail "pipeline marker is missing: $marker" }
 }

@@ -147,7 +147,7 @@ function Assert-ReleaseNotes {
         Fail "release notes path must match the requested version"
     }
     $notes = [IO.File]::ReadAllText($resolved)
-    $firstHeading = [regex]::Match($notes, '(?m)^# [^\r\n]+$')
+    $firstHeading = [regex]::Match($notes, '(?m)^# [^\r\n]+(?=\r?$)')
     $expectedHeading = "# Sky Auto Player v$Version"
     if (-not $firstHeading.Success -or $firstHeading.Value -ne $expectedHeading) {
         Fail "release notes heading must match the requested version"
