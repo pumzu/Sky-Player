@@ -141,6 +141,17 @@ function Assert-ReleaseNotes {
         Fail "release notes must be inside the checked-out source workspace"
     }
     if ((Get-Item -LiteralPath $resolved).Length -gt 16384) { Fail "release notes exceed the bounded limit" }
+    $relativePath = [IO.Path]::GetRelativePath($repoRoot, $resolved).Replace("\", "/")
+    $expectedPath = "docs/releases/v$Version.md"
+    if (-not $relativePath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "release notes path must match the requested version"
+    }
+    $notes = [IO.File]::ReadAllText($resolved)
+    $firstHeading = [regex]::Match($notes, '(?m)^# [^\r\n]+$')
+    $expectedHeading = "# Sky Auto Player v$Version"
+    if (-not $firstHeading.Success -or $firstHeading.Value -ne $expectedHeading) {
+        Fail "release notes heading must match the requested version"
+    }
     return $resolved
 }
 
