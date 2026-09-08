@@ -258,5 +258,6 @@ Rotation procedures are validated automatically using:
 
 ```powershell
 pwsh scripts/test_v4_updater_key_rotation.ps1
-pwsh scripts/ci_tauri_update_e2e.ps1 -BundleDir rust/target/dist/bundle/nsis
+$fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"
+pwsh scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir $fixtureTarget
 ```

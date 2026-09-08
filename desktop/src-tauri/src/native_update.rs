@@ -34,6 +34,10 @@ const V4_TAURI_UPDATER_PUBLIC_KEYS: &[&str] = &[V4_TAURI_UPDATER_PUBLIC_KEY];
 #[cfg(feature = "tauri-update-fixture")]
 const FIXTURE_TAURI_UPDATER_PUBLIC_KEYS: Option<&str> =
     option_env!("SKY_TAURI_UPDATE_FIXTURE_PUBLIC_KEYS");
+const FIXTURE_TAURI_UPDATER_PORT: &str = match option_env!("SKY_TAURI_UPDATE_FIXTURE_PORT") {
+    Some(port) => port,
+    None => "invalid-fixture-port",
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeUpdateCandidate {
@@ -460,8 +464,10 @@ fn first_verified_download<T>(
 fn authority_endpoint(channel: UpdateChannel) -> Result<Url, String> {
     let endpoint = if cfg!(feature = "tauri-update-fixture") {
         match channel {
-            UpdateChannel::Stable => "http://127.0.0.1:17845/stable",
-            UpdateChannel::Beta => "http://127.0.0.1:17845/beta",
+            UpdateChannel::Stable => {
+                format!("http://127.0.0.1:{FIXTURE_TAURI_UPDATER_PORT}/stable")
+            }
+            UpdateChannel::Beta => format!("http://127.0.0.1:{FIXTURE_TAURI_UPDATER_PORT}/beta"),
         }
     } else {
         let endpoint = match channel {
@@ -471,9 +477,9 @@ fn authority_endpoint(channel: UpdateChannel) -> Result<Url, String> {
         if !endpoint.contains(V4_RELEASE_AUTHORITY_REPOSITORY) {
             return Err("v4 authority URL is outside the dedicated release repository".into());
         }
-        endpoint
+        endpoint.to_owned()
     };
-    Url::parse(endpoint).map_err(|error| {
+    Url::parse(&endpoint).map_err(|error| {
         if cfg!(feature = "tauri-update-fixture") {
             format!("fixture authority URL invalid: {error}")
         } else {
@@ -628,6 +634,37 @@ mod tests {
         assert!(
             update_activity_error(ActivityReservationError::PhysicalPlaybackActive)
                 .contains("playback_active")
+        );
+    }
+
+    #[test]
+    fn production_fixture_manifest_is_tauri_consumable() {
+        let manifest = serde_json::json!({
+            "version": "4.0.0-rc.2",
+            "notes": "Deterministic bridge rotation candidate.",
+            "pub_date": "2026-09-04T00:00:00Z",
+            "platforms": {
+                "windows-x86_64": {
+                    "signature": "fixture-signature",
+                    "url": "http://127.0.0.1:40000/candidate/update.exe"
+                }
+            }
+        });
+        let release: tauri_plugin_updater::RemoteRelease =
+            serde_json::from_value(manifest).expect("fixture manifest must match Tauri schema");
+        assert_eq!(release.version.to_string(), "4.0.0-rc.2");
+        assert_eq!(
+            release
+                .download_url("windows-x86_64")
+                .expect("production platform must be present")
+                .as_str(),
+            "http://127.0.0.1:40000/candidate/update.exe"
+        );
+        assert_eq!(
+            release
+                .signature("windows-x86_64")
+                .expect("production signature must be present"),
+            "fixture-signature"
         );
     }
 

@@ -596,15 +596,16 @@ function Invoke-QualifyDownloaded {
     Invoke-Checked "cargo" @(
         "xtask", "updater-trust", "export-public-key", "--output", $canonicalPublicKey
     ) "canonical updater public-root export failed"
-    $fixtureBundle = Join-Path $root "previous-v4-fixture"
+    $fixtureTargetDir = Join-Path $root "previous-v4-fixture-target"
     Invoke-Checked "pwsh" @(
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $PSScriptRoot "ci_tauri_update_e2e.ps1"),
-        "-BundleDir", $fixtureBundle,
+        "-FixtureTargetDir", $fixtureTargetDir,
         "-CandidateInstallerPath", (Join-Path $bundle $sourceInstaller),
         "-CandidateSignaturePath", (Join-Path $bundle $sourceSignature),
         "-CandidateVersion", $Version,
-        "-CandidatePublicKeyPath", $canonicalPublicKey
+        "-CandidatePublicKeyPath", $canonicalPublicKey,
+        "-EvidencePath", (Join-Path $root "fixture-http-evidence.json")
     ) "exact downloaded previous-v4 to candidate-v4 updater qualification failed"
 
     # Production policy requires a deterministic exact-artifact Defender
