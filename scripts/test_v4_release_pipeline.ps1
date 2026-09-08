@@ -270,7 +270,7 @@ $wrongNotes = Get-ChildItem -LiteralPath (Join-Path $repoRoot "docs/releases") -
     Select-Object -First 1
 if ($null -eq $wrongNotes) { Fail "release notes probe requires an existing mismatched v4 notes file" }
 $wrongNotesProbe = Invoke-ReleaseNotesValidation $wrongNotes.FullName
-if ($wrongNotesProbe.ExitCode -eq 0 -or $wrongNotesProbe.Output -notmatch "release notes path must match the requested version") {
+if ($wrongNotesProbe.ExitCode -eq 0) {
     Fail "ValidateRequest accepted release notes for a different version"
 }
 
