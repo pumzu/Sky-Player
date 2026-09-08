@@ -71,6 +71,30 @@ function Restore-SavedEnvironment {
     }
 }
 
+function Redact-UpdaterVerifierOutput {
+    param(
+        [AllowEmptyString()]
+        [string]$Output,
+        [string]$KeyFile,
+        [string]$Password
+    )
+
+    $redacted = $Output
+    $keyCandidates = @(
+        $KeyFile,
+        [IO.Path]::GetFullPath($KeyFile),
+        ([IO.Path]::GetFullPath($KeyFile) -replace '\\', '/')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($candidate in $keyCandidates) {
+        $redacted = $redacted -replace [regex]::Escape($candidate), '[REDACTED]'
+    }
+    if (-not [string]::IsNullOrEmpty($Password)) {
+        $redacted = $redacted.Replace($Password, '[REDACTED]')
+    }
+    return $redacted
+}
+
 function Get-CanonicalUpdaterKeyId {
     $tauriConfPath = Join-Path $repoRoot "desktop\src-tauri\tauri.conf.json"
     $tauriConf = Get-Content -LiteralPath $tauriConfPath -Raw | ConvertFrom-Json
@@ -253,8 +277,16 @@ try {
         $prevPwd = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
         $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $passwordValue
         try {
-            & cargo xtask updater-trust verify-private-key --key-file $resolvedKeyPath
-            if ($LASTEXITCODE -ne 0) {
+            $verificationOutput = & cargo xtask updater-trust verify-private-key --key-file $resolvedKeyPath 2>&1 | Out-String
+            $verificationExitCode = $LASTEXITCODE
+            $verificationOutput = Redact-UpdaterVerifierOutput `
+                -Output $verificationOutput `
+                -KeyFile $resolvedKeyPath `
+                -Password $passwordValue
+            if (-not [string]::IsNullOrWhiteSpace($verificationOutput)) {
+                Write-Output $verificationOutput.TrimEnd()
+            }
+            if ($verificationExitCode -ne 0) {
                 throw "Pre-packaging updater key verification failed: private key does not match canonical v4 public root"
             }
         } finally {

@@ -1364,6 +1364,7 @@ fn v4_trust_material_contract(root: &Path) -> Result<()> {
     for marker in [
         "V4_TEST_ONLY_PASS_PHRASE_MARKER",
         "verify_v4_updater_private_key.ps1",
+        "Assert-NoKeyPath",
         "Verifier mismatch path",
         "Verifier success path",
         "throwaway.key",
@@ -1384,6 +1385,7 @@ fn v4_trust_material_contract(root: &Path) -> Result<()> {
         "UpdaterPrivateKeyPath",
         "ApprovedSignerThumbprint",
         "updater-trust verify-private-key",
+        "Redact-UpdaterVerifierOutput",
         "updater-trust verify-signature",
         "V4_QUALIFICATION_EVIDENCE.json",
         "V4_PRODUCTION_RELEASE_EVIDENCE.json",
@@ -1422,6 +1424,7 @@ fn v4_trust_material_contract(root: &Path) -> Result<()> {
         "Channel policy validation fails closed on invalid SemVer / channel",
         "Mutually exclusive provider configuration fails closed",
         "Wrong updater private key fails pre-flight verification before packaging",
+        "Assert-NoThrowawayKeyPath",
         "Secret values are not emitted by expected error paths",
         "Inherited signing key environment fails closed",
         "Stale candidate artifacts and evidence are purged before packaging",
