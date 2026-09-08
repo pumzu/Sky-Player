@@ -285,7 +285,9 @@ Step 8: Evidence Emission & Self-Validation
 
 The manual production entry point is `.github/workflows/release-v4.yml`. It
 accepts an explicit version, channel, `v<version>` tag, source SHA, notes path,
-external updater-key path, and UTC publication timestamp. The workflow
+and UTC publication timestamp. The dedicated runner supplies
+`V4_UPDATER_PRIVATE_KEY_PATH` from runner-local process configuration; this is
+not a workflow input. The workflow
 requires the checked-out commit and workflow SHA to equal the requested source
 SHA, then executes these fail-closed states:
 

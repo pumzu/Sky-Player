@@ -56,8 +56,8 @@ if (-not $pipeline.Contains("FixtureTargetDir")) {
     Fail "production qualification must pass an explicit fixture target directory"
 }
 foreach ($marker in @(
-    'updater_private_key_path:',
-    'inputs.updater_private_key_path',
+    'runner-local updater key configuration',
+    'V4_UPDATER_PRIVATE_KEY_PATH',
     '-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH'
 )) {
     if (-not $workflow.Contains($marker)) {
@@ -297,7 +297,7 @@ foreach ($marker in @(
     'actions/attest@',
     '--source-digest $env:GITHUB_SHA',
     'Initialize release state root', 'RUNNER_TEMP', 'GITHUB_RUN_ID', 'GITHUB_ENV',
-    'Mask updater key path', '::add-mask::$env:V4_UPDATER_PRIVATE_KEY_PATH',
+    'Verify runner-local updater key configuration',
     'RecordAttestations', 'PublishDraft', 'PromoteMetadata', 'FinalVerify'
 )) {
     if (-not $workflow.Contains($marker)) { Fail "workflow marker is missing: $marker" }
@@ -308,7 +308,11 @@ foreach ($forbidden in @(
     'secrets.UPDATER_PRIVATE_KEY', 'secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
     'secrets.UPDATER_PASSWORD', 'secrets.V4_UPDATER_PASSWORD',
     'updater_password_env', 'credential_target',
-    'V4_RELEASE_STATE_ROOT: ${{ runner.temp }}'
+    'V4_RELEASE_STATE_ROOT: ${{ runner.temp }}',
+    'updater_private_key_path:',
+    'inputs.updater_private_key_path',
+    'Mask updater key path',
+    '::add-mask::'
 )) {
     if ($workflow.Contains($forbidden)) { Fail "forbidden production workflow marker remains: $forbidden" }
 }

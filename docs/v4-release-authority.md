@@ -123,7 +123,9 @@ point. It is manual, runs on the dedicated/single-tenant Windows runner, and
 uses `V4_RELEASE_AUTHORITY_TOKEN` for release/assets/channel metadata writes.
 The source `GITHUB_TOKEN` and OIDC permissions remain separate and are used for
 source-bound attestations. The updater private key is not a GitHub secret: the
-workflow receives only a path to the externally stored key on the runner.
+production workflow does not accept a key-path input and reads
+`V4_UPDATER_PRIVATE_KEY_PATH` only from dedicated runner-local process
+configuration.
 The authority token contract is bounded to the dedicated repository only, with
 the minimum Administration read and Contents read/write capability needed to
 inspect immutable-release policy, create/read/publish release records, upload

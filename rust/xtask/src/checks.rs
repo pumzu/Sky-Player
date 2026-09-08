@@ -450,8 +450,8 @@ fn v4_release_pipeline_contract_source(
         "attestations: write",
         "V4_RELEASE_AUTHORITY_TOKEN",
         "ref: ${{ inputs.source_sha }}",
-        "updater_private_key_path:",
-        "inputs.updater_private_key_path",
+        "Verify runner-local updater key configuration",
+        "V4_UPDATER_PRIVATE_KEY_PATH",
         "-UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH",
         "persist-credentials: false",
         "actions/attest@",
@@ -501,6 +501,10 @@ fn v4_release_pipeline_contract_source(
         "secrets.V4_UPDATER_PASSWORD",
         "updater_password_env",
         "credential_target",
+        "updater_private_key_path:",
+        "inputs.updater_private_key_path",
+        "Mask updater key path",
+        "::add-mask::",
         "Sky-Auto-Player-Updater.exe",
         "MANIFEST.json.sig",
         ".github/workflows/release.yml",
@@ -3212,8 +3216,8 @@ jobs:
   release:
     runs-on: [self-hosted, windows, v4-release, single-tenant]
     ref: ${{ inputs.source_sha }}
-    updater_private_key_path:
-    inputs.updater_private_key_path
+    Verify runner-local updater key configuration
+    V4_UPDATER_PRIVATE_KEY_PATH
     -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
     persist-credentials: false
     env: V4_RELEASE_AUTHORITY_TOKEN
