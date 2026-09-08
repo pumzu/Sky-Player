@@ -198,6 +198,10 @@ jobs:
       - name: Verify release contract test tools
         run: pwsh scripts/ci_require_windows_tools.ps1 -Tool cargo,rustc,rustup,git,bun,bunx
 
+      - name: Install pinned desktop dependencies for release contract tests
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
       - name: Read-only v3 namespace and dedicated v4 authority acceptance
         env:
           GH_TOKEN: ${{ github.token }}
