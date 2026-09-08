@@ -11,20 +11,12 @@ const ROOTS: &[&str] = &[
     ".github/workflows",
     ".github/actions",
 ];
-const EXTRA_FILES: &[&str] = &["pyproject.toml", "uv.lock"];
 const HISTORICAL_PREFIXES: &[&str] = &[
     "scripts/bench_phase",
     "docs/evidence/desktop-phase",
     "tests/test_phase",
 ];
-const IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "dist",
-    ".pytest_cache",
-    "__pycache__",
-];
+const IGNORED_DIRS: &[&str] = &[".git", "node_modules", "target", "dist"];
 
 fn is_historical(path: &str) -> bool {
     HISTORICAL_PREFIXES
@@ -66,10 +58,7 @@ pub(crate) fn path_has_durable_phase_name(relative: &str) -> bool {
 }
 
 fn files(root: &Path) -> Vec<PathBuf> {
-    let mut output = EXTRA_FILES
-        .iter()
-        .map(|path| root.join(path))
-        .collect::<Vec<_>>();
+    let mut output = Vec::new();
     for relative in ROOTS {
         let base = root.join(relative);
         if !base.is_dir() {
@@ -80,9 +69,10 @@ fn files(root: &Path) -> Vec<PathBuf> {
                 .follow_links(false)
                 .into_iter()
                 .filter_entry(|entry| {
-                    !entry.file_name().to_str().is_some_and(|name| {
-                        IGNORED_DIRS.contains(&name) || name.ends_with(".egg-info")
-                    })
+                    !entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| IGNORED_DIRS.contains(&name))
                 })
                 .filter_map(std::result::Result::ok)
                 .filter(|entry| entry.file_type().is_file())
@@ -95,10 +85,7 @@ fn files(root: &Path) -> Vec<PathBuf> {
 }
 
 pub(crate) fn run(root: &Path) -> Result<()> {
-    let audit_paths = [
-        root.join("rust/xtask/src/audits/durable_names.rs"),
-        root.join("scripts/audit_durable_phase_names.py"),
-    ];
+    let audit_paths = [root.join("rust/xtask/src/audits/durable_names.rs")];
     let mut violations = Vec::new();
     for path in files(root) {
         if audit_paths.contains(&path) || !path.is_file() {
@@ -143,19 +130,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn phase_boundary_semantics_match_python_contract() {
+    fn phase_boundary_semantics_match_historical_fixture_contract() {
         for value in [
             "SKY_PHASE8_RESTART_SELFTEST",
             "__SKY_PHASE8_GUI_SMOKE__",
             "some_phase9_runtime_flag",
             "PHASE8_ARTIFACT_SUMMARY",
-            "scripts/build_phase8.py",
+            "scripts/build_phase8_fixture",
         ] {
             assert!(contains_phase_name(value));
             assert!(path_has_durable_phase_name(value));
         }
         assert!(!path_has_durable_phase_name(
-            "tests/test_phase9_gui_canonical.py"
+            "tests/test_phase9_gui_canonical_fixture"
         ));
         assert!(!path_has_durable_phase_name("rust/xtask/src/dist.rs"));
     }

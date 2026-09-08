@@ -4,6 +4,8 @@ use std::process::Command;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+pub const CODE_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", ".github/workflows/ci.yml"];
+
 pub const PACKAGE_FILES: &[&str] = &[
     ".env.example",
     "windows_version_info.txt",
@@ -16,66 +18,97 @@ pub const PACKAGE_FILES: &[&str] = &[
     "desktop/bun.lock",
     "desktop/package.json",
     "desktop/src-tauri/tauri.conf.json",
+    "scripts/sign_v4_authenticode.ps1",
+    "scripts/verify_v4_authenticode.ps1",
+    "scripts/v4_authenticode_crypto.ps1",
+    "scripts/setup_v4_test_signing.ps1",
+    "scripts/cleanup_v4_test_signing.ps1",
+    "scripts/test_v4_authenticode_integrity.ps1",
+    "scripts/test_v4_production_signing_contract.ps1",
 ];
 
-pub const PACKAGE_WORKFLOW_FILES: &[&str] =
-    &[".github/workflows/ci.yml", ".github/workflows/release.yml"];
-
 pub const PACKAGE_PREFIXES: &[&str] = &[
+    "desktop/",
     "desktop/src-tauri/capabilities/",
     "desktop/src-tauri/icons/",
     "scripts/build_",
-    "rust/xtask/",
 ];
 
 pub const CODE_PREFIXES: &[&str] = &["src/", "desktop/", "rust/", "tests/", "scripts/", ".cargo/"];
 
-pub const BROWSER_PREFIXES: &[&str] = &[
-    "desktop/src/",
-    "desktop/src-tauri/src/commands.rs",
-    "desktop/src-tauri/src/ipc_contract.rs",
-    "desktop/src-tauri/src/ui_events.rs",
-    "desktop/src/bridge/generated/",
+pub const UPDATER_FILES: &[&str] = &[
+    "desktop/src-tauri/src/native_update.rs",
+    "desktop/src-tauri/tauri.conf.json",
+    "rust/xtask/src/release_authority.rs",
+    "rust/xtask/src/tauri_bundle.rs",
+    "scripts/promote_v4_metadata.ps1",
 ];
 
-pub const BROWSER_FILES: &[&str] = &[
-    "desktop/index.html",
+pub const UPDATER_PREFIXES: &[&str] = &[
+    "scripts/ci_tauri_update_e2e",
+    "scripts/test_v4_updater_",
+    "scripts/verify_v4_updater_",
+];
+
+pub const RELEASE_FILES: &[&str] = &[
+    ".github/workflows/release-v4.yml",
+    "rust/xtask/src/release_authority.rs",
+    "scripts/ci_v4_release_authority_acceptance.ps1",
+    "scripts/promote_v4_metadata.ps1",
+    "scripts/v4_release_pipeline.ps1",
+    "scripts/orchestrate_v4_production_release.ps1",
+    "scripts/test_v4_production_orchestrator.ps1",
+    "scripts/test_v4_release_pipeline.ps1",
+    "scripts/test_v4_release_authority_rehearsal.ps1",
+    "scripts/v4_updater_credential_broker.ps1",
+    "scripts/set_v4_updater_session_credential.ps1",
+    "scripts/remove_v4_updater_session_credential.ps1",
+];
+
+pub const RELEASE_PREFIXES: &[&str] = &["scripts/v4_release_", "scripts/test_v4_release_"];
+
+pub const SUPPLY_CHAIN_FILES: &[&str] = &[
+    "Cargo.toml",
+    "rust/Cargo.toml",
+    "rust/Cargo.lock",
+    "desktop/src-tauri/Cargo.toml",
     "desktop/package.json",
     "desktop/bun.lock",
-    "desktop/vite.config.ts",
-    "desktop/vite.config.js",
-    "desktop/vitest.config.ts",
-    "desktop/vitest.config.js",
-    "desktop/playwright.config.ts",
-    "desktop/playwright.config.js",
-    "desktop/scripts/run-e2e.mjs",
+    ".cargo/config.toml",
+    "rust/xtask/src/supply_chain.rs",
+    ".github/workflows/ci.yml",
 ];
+
+pub const SUPPLY_CHAIN_PREFIXES: &[&str] = &["rust/supply-chain/"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Classification {
-    pub static_required: bool,
     pub code_required: bool,
     pub package_required: bool,
-    pub browser_required: bool,
+    pub updater_required: bool,
+    pub release_required: bool,
+    pub supply_chain_required: bool,
     pub reason: String,
 }
 
 impl Classification {
     pub fn new_full() -> Self {
         Self {
-            static_required: true,
             code_required: true,
             package_required: true,
-            browser_required: true,
+            updater_required: true,
+            release_required: true,
+            supply_chain_required: true,
             reason: "full validation requested".to_owned(),
         }
     }
 
     pub fn print(&self) {
-        println!("static_required={}", self.static_required);
         println!("code_required={}", self.code_required);
         println!("package_required={}", self.package_required);
-        println!("browser_required={}", self.browser_required);
+        println!("updater_required={}", self.updater_required);
+        println!("release_required={}", self.release_required);
+        println!("supply_chain_required={}", self.supply_chain_required);
         println!("classification_reason={}", self.reason);
     }
 }
@@ -90,15 +123,42 @@ pub fn normalize(value: &str) -> String {
 
 pub fn package_sensitive(path: &str) -> bool {
     PACKAGE_FILES.contains(&path)
-        || PACKAGE_WORKFLOW_FILES.contains(&path)
         || PACKAGE_PREFIXES
             .iter()
             .any(|prefix| path.starts_with(prefix))
 }
 
-pub fn classify(paths: &[String], full: bool) -> (bool, bool, bool, bool, String) {
+pub fn updater_sensitive(path: &str) -> bool {
+    UPDATER_FILES.contains(&path)
+        || UPDATER_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+}
+
+pub fn release_sensitive(path: &str) -> bool {
+    RELEASE_FILES.contains(&path)
+        || RELEASE_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+}
+
+pub fn supply_chain_sensitive(path: &str) -> bool {
+    SUPPLY_CHAIN_FILES.contains(&path)
+        || SUPPLY_CHAIN_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+}
+
+pub fn classify(paths: &[String], full: bool) -> (bool, bool, bool, bool, bool, String) {
     if full {
-        return (true, true, true, true, "full validation requested".into());
+        return (
+            true,
+            true,
+            true,
+            true,
+            true,
+            "full validation requested".into(),
+        );
     }
     let paths: Vec<String> = paths
         .iter()
@@ -106,20 +166,38 @@ pub fn classify(paths: &[String], full: bool) -> (bool, bool, bool, bool, String
         .filter(|p| !p.is_empty())
         .collect();
     if paths.is_empty() {
-        return (false, false, false, false, "no changed paths".into());
+        return (false, false, false, false, false, "no changed paths".into());
     }
     let package_required = paths.iter().any(|path| package_sensitive(path));
-    let code = paths.iter().any(|path| {
-        CODE_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
-            || PACKAGE_FILES.contains(&path.as_str())
+    let updater_required = paths.iter().any(|path| updater_sensitive(path));
+    let release_required = paths.iter().any(|path| release_sensitive(path));
+    let supply_chain_required = paths.iter().any(|path| supply_chain_sensitive(path));
+    let code_required = paths.iter().any(|path| {
+        (CODE_FILES.contains(&path.as_str())
+            || CODE_PREFIXES.iter().any(|prefix| path.starts_with(prefix)))
+            && !release_sensitive(path)
     }) || package_required;
-    let browser_required = paths.iter().any(|path| {
-        BROWSER_FILES.contains(&path.as_str())
-            || BROWSER_PREFIXES
-                .iter()
-                .any(|prefix| path.starts_with(prefix))
-    });
-    let reason = if package_required {
+    let reason = if release_required {
+        let release = paths
+            .iter()
+            .filter(|path| release_sensitive(path))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        format!(
+            "release-sensitive: {}",
+            release.into_iter().take(3).collect::<Vec<_>>().join(", ")
+        )
+    } else if updater_required {
+        let updater = paths
+            .iter()
+            .filter(|path| updater_sensitive(path))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        format!(
+            "updater-sensitive: {}",
+            updater.into_iter().take(3).collect::<Vec<_>>().join(", ")
+        )
+    } else if package_required {
         let package = paths
             .iter()
             .filter(|path| package_sensitive(path))
@@ -129,15 +207,24 @@ pub fn classify(paths: &[String], full: bool) -> (bool, bool, bool, bool, String
             "package-sensitive: {}",
             package.into_iter().take(3).collect::<Vec<_>>().join(", ")
         )
-    } else if code {
+    } else if code_required {
         format!(
             "code/windows: {}",
             paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
         )
+    } else if supply_chain_required {
+        "supply-chain-sensitive".into()
     } else {
-        "static/site/docs only".into()
+        "docs/site only".into()
     };
-    (true, code, package_required, browser_required, reason)
+    (
+        code_required,
+        package_required,
+        updater_required,
+        release_required,
+        supply_chain_required,
+        reason,
+    )
 }
 
 fn find_repo_root() -> Result<PathBuf> {
@@ -199,13 +286,20 @@ pub fn run(
     }
     let root = find_repo_root()?;
     let paths = changed_paths(&root, base, head, paths_file)?;
-    let (static_required, code_required, package_required, browser_required, reason) =
-        classify(&paths, false);
-    let c = Classification {
-        static_required,
+    let (
         code_required,
         package_required,
-        browser_required,
+        updater_required,
+        release_required,
+        supply_chain_required,
+        reason,
+    ) = classify(&paths, false);
+    let c = Classification {
+        code_required,
+        package_required,
+        updater_required,
+        release_required,
+        supply_chain_required,
         reason,
     };
     c.print();
@@ -216,7 +310,7 @@ pub fn run(
 mod tests {
     use super::*;
 
-    fn values(paths: &[&str]) -> (bool, bool, bool, bool, String) {
+    fn values(paths: &[&str]) -> (bool, bool, bool, bool, bool, String) {
         let owned: Vec<String> = paths.iter().map(|path| (*path).to_owned()).collect();
         classify(&owned, false)
     }
@@ -224,116 +318,76 @@ mod tests {
     #[test]
     fn full_mode_short_circuits_without_paths() {
         let result = classify(&[], true);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(result.2);
-        assert!(result.3);
-        assert_eq!(result.4, "full validation requested");
-
-        // Calling run with full=true must succeed without stdin or git repository
+        assert!(result.0 && result.1 && result.2 && result.3 && result.4);
+        assert_eq!(result.5, "full validation requested");
         assert!(run(true, None, None, None).is_ok());
     }
 
     #[test]
     fn empty_paths_returns_all_false() {
         let result = values(&[]);
-        assert!(!result.0);
-        assert!(!result.1);
-        assert!(!result.2);
-        assert!(!result.3);
-        assert_eq!(result.4, "no changed paths");
+        assert!(!result.0 && !result.1 && !result.2 && !result.3 && !result.4);
+        assert_eq!(result.5, "no changed paths");
     }
 
     #[test]
-    fn acceptance_scenario_a_docs_only() {
+    fn docs_only_skips_expensive_jobs() {
         let result = values(&["docs/foo.md"]);
-        assert!(result.0);
-        assert!(!result.1);
-        assert!(!result.2);
-        assert!(!result.3);
-        assert_eq!(result.4, "static/site/docs only");
+        assert!(!result.0 && !result.1 && !result.2 && !result.3 && !result.4);
+        assert_eq!(result.5, "docs/site only");
     }
 
     #[test]
-    fn acceptance_scenario_b_rust_player_code() {
+    fn native_code_requires_code_validation_only() {
         let result = values(&["rust/crates/sky_player/src/lib.rs"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(!result.2);
-        assert!(!result.3);
-        assert!(result.4.starts_with("code/windows:"));
+        assert!(result.0 && !result.1 && !result.2 && !result.3 && !result.4);
+        assert!(result.5.starts_with("code/windows:"));
     }
 
     #[test]
-    fn acceptance_scenario_c_app_core_rust() {
-        let result = values(&["rust/crates/sky_app_core/src/settings.rs"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(!result.2);
-        assert!(!result.3);
-        assert!(result.4.starts_with("code/windows:"));
-    }
-
-    #[test]
-    fn acceptance_scenario_d_desktop_frontend() {
+    fn desktop_changes_require_package_qualification() {
         let result = values(&["desktop/src/App.tsx"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(!result.2);
-        assert!(result.3);
-        assert!(result.4.starts_with("code/windows:"));
+        assert!(result.0 && result.1 && !result.2 && !result.3);
+        assert!(result.5.starts_with("package-sensitive:"));
     }
 
     #[test]
-    fn acceptance_scenario_e_cargo_lock() {
+    fn cargo_dependency_changes_require_package_and_supply_chain_validation() {
         let result = values(&["rust/Cargo.lock"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(result.2);
-        assert!(!result.3);
-        assert!(result.4.starts_with("package-sensitive:"));
+        assert!(result.0 && result.1 && !result.2 && !result.3 && result.4);
+        assert!(result.5.starts_with("package-sensitive:"));
     }
 
     #[test]
-    fn acceptance_scenario_e_desktop_tauri_manifest() {
-        let result = values(&["desktop/src-tauri/Cargo.toml"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(result.2);
-        assert!(!result.3);
-        assert!(result.4.starts_with("package-sensitive:"));
-    }
-
-    #[test]
-    fn acceptance_scenario_f_ci_workflow() {
+    fn ci_workflow_is_code_and_supply_chain_sensitive_but_not_package_sensitive() {
         let result = values(&[".github/workflows/ci.yml"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(result.2);
-        assert!(!result.3);
-        assert!(result.4.starts_with("package-sensitive:"));
+        assert!(result.0 && !result.1 && !result.2 && !result.3 && result.4);
+        assert!(result.5.starts_with("code/windows:"));
     }
 
     #[test]
-    fn package_sensitive_changes_require_code_validation() {
+    fn xtask_changes_do_not_imply_package_qualification() {
         let result = values(&["rust/xtask/src/main.rs"]);
-        assert!(result.0);
-        assert!(result.1);
-        assert!(result.2);
+        assert!(result.0 && !result.1 && !result.2 && !result.3 && !result.4);
+    }
+
+    #[test]
+    fn updater_only_changes_select_updater_validation() {
+        let result = values(&["scripts/ci_tauri_update_e2e_core.ps1"]);
+        assert!(result.0 && !result.1 && result.2 && !result.3);
+    }
+
+    #[test]
+    fn release_only_changes_select_release_authority_validation() {
+        let result = values(&[".github/workflows/release-v4.yml"]);
+        assert!(!result.0 && !result.1 && !result.2 && result.3);
     }
 
     #[test]
     fn full_and_empty_modes_are_stable() {
         let full = classify(&["docs/foo.md".into()], true);
-        assert!(full.0);
-        assert!(full.1);
-        assert!(full.2);
-        assert!(full.3);
-
+        assert!(full.0 && full.1 && full.2 && full.3 && full.4);
         let empty = classify(&[], false);
-        assert!(!empty.0);
-        assert!(!empty.1);
-        assert!(!empty.2);
-        assert!(!empty.3);
+        assert!(!empty.0 && !empty.1 && !empty.2 && !empty.3 && !empty.4);
     }
 }

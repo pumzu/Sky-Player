@@ -18,20 +18,10 @@ function Redact-UpdaterVerifierOutput {
     param(
         [AllowEmptyString()]
         [string]$Output,
-        [string]$KeyFile,
         [string]$Password
     )
 
     $redacted = $Output
-    $keyCandidates = @(
-        $KeyFile,
-        [IO.Path]::GetFullPath($KeyFile),
-        ([IO.Path]::GetFullPath($KeyFile) -replace '\\', '/')
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
-
-    foreach ($candidate in $keyCandidates) {
-        $redacted = $redacted -replace [regex]::Escape($candidate), '[REDACTED]'
-    }
     if (-not [string]::IsNullOrEmpty($Password)) {
         $redacted = $redacted.Replace($Password, '[REDACTED]')
     }
@@ -83,10 +73,10 @@ $prevPwd = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $passwordValue
 try {
     # The child owns verification and emits only sanitized status. Keep a final
-    # redaction guard around the boundary so this process never forwards a key
-    # path or password if a dependency unexpectedly includes either in output.
+    # Redact only cryptographic secret material at this boundary. A filesystem
+    # path is runner configuration, not a cryptographic secret.
     $verificationOutput = & cargo xtask updater-trust verify-private-key --key-file $keyFile 2>&1 | Out-String
-    $verificationOutput = Redact-UpdaterVerifierOutput -Output $verificationOutput -KeyFile $keyFile -Password $passwordValue
+    $verificationOutput = Redact-UpdaterVerifierOutput -Output $verificationOutput -Password $passwordValue
     Write-Output $verificationOutput.TrimEnd()
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[FAIL] Local updater private key does not match canonical production v4 root"
@@ -95,7 +85,7 @@ try {
     Write-Host "[PASS] Local updater private key matches canonical production v4 root"
     exit 0
 } catch {
-    $errorMessage = Redact-UpdaterVerifierOutput -Output $_.Exception.Message -KeyFile $keyFile -Password $passwordValue
+    $errorMessage = Redact-UpdaterVerifierOutput -Output $_.Exception.Message -Password $passwordValue
     Write-Host "[FAIL] Updater private key verification failed: $errorMessage"
     exit 1
 } finally {

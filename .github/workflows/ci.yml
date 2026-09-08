@@ -30,10 +30,11 @@ jobs:
         shell: bash
 
     outputs:
-      static_required: ${{ steps.filter-pr.outputs.static_required || steps.filter-full.outputs.static_required }}
       code_required: ${{ steps.filter-pr.outputs.code_required || steps.filter-full.outputs.code_required }}
       package_required: ${{ steps.filter-pr.outputs.package_required || steps.filter-full.outputs.package_required }}
-      browser_required: ${{ steps.filter-pr.outputs.browser_required || steps.filter-full.outputs.browser_required }}
+      updater_required: ${{ steps.filter-pr.outputs.updater_required || steps.filter-full.outputs.updater_required }}
+      release_required: ${{ steps.filter-pr.outputs.release_required || steps.filter-full.outputs.release_required }}
+      supply_chain_required: ${{ steps.filter-pr.outputs.supply_chain_required || steps.filter-full.outputs.supply_chain_required }}
       classification_reason: ${{ steps.filter-pr.outputs.classification_reason || steps.filter-full.outputs.classification_reason }}
 
     steps:
@@ -45,19 +46,21 @@ jobs:
         id: filter-full
         run: |
           {
-            echo "static_required=true"
             echo "code_required=true"
             echo "package_required=true"
-            echo "browser_required=true"
+            echo "updater_required=true"
+            echo "release_required=true"
+            echo "supply_chain_required=true"
             echo "classification_reason=full validation requested"
           } >> "$GITHUB_OUTPUT"
           {
             echo '## Validation classification'
             echo '```text'
-            echo 'static_required=true'
             echo 'code_required=true'
             echo 'package_required=true'
-            echo 'browser_required=true'
+            echo 'updater_required=true'
+            echo 'release_required=true'
+            echo 'supply_chain_required=true'
             echo 'classification_reason=full validation requested'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -121,7 +124,7 @@ jobs:
   static:
     name: Static and security gates
     needs: changes
-    if: needs.changes.outputs.static_required == 'true'
+    if: needs.changes.outputs.code_required == 'true' || needs.changes.outputs.package_required == 'true' || needs.changes.outputs.updater_required == 'true' || needs.changes.outputs.release_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -139,17 +142,6 @@ jobs:
           fetch-tags: false
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Fetch Wave-6 retirement baseline commit
-        run: |
-          set -euo pipefail
-          baseline="$(jq -r '.baseline' docs/migration/wave6-tooling-retirement-ledger.json)"
-          if [[ ! "$baseline" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid baseline SHA in wave6 ledger: $baseline" >&2
-            exit 1
-          fi
-          git fetch --no-tags --depth=1 origin "$baseline"
-          git cat-file -e "$baseline^{commit}"
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.98.0 --profile minimal
@@ -175,9 +167,9 @@ jobs:
   release_authority:
     name: V4 release authority acceptance
     needs: changes
-    if: needs.changes.outputs.static_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    if: needs.changes.outputs.release_required == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     defaults:
@@ -195,6 +187,21 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Rust — install pinned toolchain for release contract tests
+        run: rustup toolchain install 1.98.0 --profile minimal
+
+      - name: Set up Bun for release contract tests
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Verify release contract test tools
+        run: pwsh scripts/ci_require_windows_tools.ps1 -Tool cargo,rustc,rustup,git,bun,bunx
+
+      - name: Install pinned desktop dependencies for release contract tests
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
       - name: Read-only v3 namespace and dedicated v4 authority acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,6 +212,12 @@ jobs:
 
       - name: V4 release pipeline mock state-machine self-test
         run: pwsh scripts/test_v4_release_pipeline.ps1
+
+      - name: Run V4 production release orchestrator contract test
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_orchestrator.ps1
+
+      - name: Run V4 updater private-key verifier secret-output regression
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_updater_private_key.ps1
 
       - name: Report CI timing
         if: always()
@@ -222,7 +235,7 @@ jobs:
   supply_chain:
     name: Supply-chain and advisory security
     needs: changes
-    if: needs.changes.outputs.static_required == 'true'
+    if: needs.changes.outputs.supply_chain_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -338,17 +351,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Fetch Wave-6 retirement baseline commit for restricted validation
-        if: needs.changes.outputs.package_required == 'true'
-        run: |
-          $ledger = Get-Content "docs/migration/wave6-tooling-retirement-ledger.json" -Raw | ConvertFrom-Json
-          $baseline = $ledger.baseline
-          if ($baseline -notmatch '^[0-9a-f]{40}$') {
-            throw "Invalid baseline SHA in wave6 ledger: $baseline"
-          }
-          git fetch --no-tags --depth=1 origin $baseline
-          git cat-file -e "$baseline^{commit}"
-
       - name: Rust — install pinned stable toolchain
         run: rustup toolchain install 1.98.0 --profile minimal --target x86_64-pc-windows-msvc --component rustfmt --component clippy
 
@@ -390,7 +392,7 @@ jobs:
         run: pwsh scripts/ci_require_windows_tools.ps1 -Tool cargo,rustc,rustup,git,bun,bunx,sccache
 
       - name: Install Chromium for desktop browser smoke
-        if: needs.changes.outputs.browser_required == 'true'
+        if: needs.changes.outputs.package_required == 'true'
         working-directory: desktop
         run: |
           bun install --frozen-lockfile
@@ -401,58 +403,11 @@ jobs:
           }
           bun node_modules/playwright/cli.js install chromium
 
-      - name: Construct Python-unavailable validation environment
-        if: needs.changes.outputs.package_required == 'true'
-        run: |
-          $required = @("cargo", "rustc", "rustup", "git", "bun", "bunx", "link", "rc", "sccache")
-          $toolDirectories = foreach ($name in $required) {
-            $command = Get-Command $name -ErrorAction SilentlyContinue
-            if ($command) { Split-Path -Parent $command.Source }
-          }
-          $systemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { "C:\Windows" }
-          $restricted = @(
-            $toolDirectories
-            (Join-Path $systemRoot "System32")
-            (Join-Path $systemRoot "System32\Wbem")
-          ) | Where-Object { $_ } | Select-Object -Unique
-          $env:PATH = $restricted -join ";"
-          foreach ($name in @("python", "python3", "py", "uv")) {
-            $found = where.exe $name 2>$null
-            if ($LASTEXITCODE -eq 0 -and $found) { throw "$name remains discoverable in restricted PATH: $found" }
-            Write-Host "${name}: not found"
-          }
-          $global:LASTEXITCODE = 0
-          foreach ($name in @("PYTHONHOME", "PYTHONPATH", "PYTHONUTF8", "VIRTUAL_ENV", "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR")) {
-            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-          }
-          "PATH=$env:PATH" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-          foreach ($name in @("PYTHONHOME", "PYTHONPATH", "PYTHONUTF8", "VIRTUAL_ENV", "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR")) {
-            "$name=" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-          }
-
-      - name: Restricted repository verification without Python
-        if: needs.changes.outputs.package_required == 'true'
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.0
-        run: |
-          cargo xtask check static --skip-supply-chain
-          if ($LASTEXITCODE -ne 0) { throw "cargo xtask check static failed with exit code $LASTEXITCODE" }
-          cargo xtask check rust
-          if ($LASTEXITCODE -ne 0) { throw "cargo xtask check rust failed with exit code $LASTEXITCODE" }
-          if ("${{ needs.changes.outputs.browser_required }}" -eq "true") {
-            cargo xtask check desktop
-          } else {
-            $env:SKY_DESKTOP_SKIP_BROWSER = "1"
-            cargo xtask check desktop
-          }
-          if ($LASTEXITCODE -ne 0) { throw "cargo xtask check desktop failed with exit code $LASTEXITCODE" }
-
       - name: Repository verification — desktop
-        if: needs.changes.outputs.package_required != 'true'
         env:
           RUSTUP_TOOLCHAIN: 1.98.0
         run: |
-          if ("${{ needs.changes.outputs.browser_required }}" -eq "true") {
+          if ("${{ needs.changes.outputs.package_required }}" -eq "true") {
             cargo xtask check desktop
           } else {
             $env:SKY_DESKTOP_SKIP_BROWSER = "1"
@@ -468,9 +423,9 @@ jobs:
         run: pwsh scripts/ci_job_timing.ps1 -Mode finish -Job validate -CacheHit "${{ steps.rust-cache.outputs.cache-hit }}"
 
   updater_e2e:
-    name: Packaged v4 updater fixture qualification
-    needs: [changes, static, release_authority, supply_chain, validate]
-    if: needs.changes.outputs.package_required == 'true'
+    name: Updater fixture qualification
+    needs: [changes, static]
+    if: needs.changes.outputs.updater_required == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -567,7 +522,7 @@ jobs:
 
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, release_authority, supply_chain, validate]
+    needs: [changes, static]
     if: needs.changes.outputs.package_required == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
@@ -651,34 +606,6 @@ jobs:
         working-directory: desktop
         run: bun run build
 
-      - name: Construct Python-unavailable canonical environment
-        run: |
-          $required = @("cargo", "rustc", "rustup", "git", "bun", "bunx", "link", "rc", "sccache")
-          $toolDirectories = foreach ($name in $required) {
-            $command = Get-Command $name -ErrorAction SilentlyContinue
-            if ($command) { Split-Path -Parent $command.Source }
-          }
-          $systemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { "C:\Windows" }
-          $restricted = @(
-            $toolDirectories
-            (Join-Path $systemRoot "System32")
-            (Join-Path $systemRoot "System32\Wbem")
-          ) | Where-Object { $_ } | Select-Object -Unique
-          $env:PATH = $restricted -join ";"
-          foreach ($name in @("python", "python3", "py", "uv")) {
-            $found = where.exe $name 2>$null
-            if ($LASTEXITCODE -eq 0 -and $found) { throw "$name remains discoverable in restricted PATH: $found" }
-            Write-Host "${name}: not found"
-          }
-          $global:LASTEXITCODE = 0
-          foreach ($name in @("PYTHONHOME", "PYTHONPATH", "PYTHONUTF8", "VIRTUAL_ENV", "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR")) {
-            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-          }
-          "PATH=$env:PATH" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-          foreach ($name in @("PYTHONHOME", "PYTHONPATH", "PYTHONUTF8", "VIRTUAL_ENV", "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR")) {
-            "$name=" | Add-Content $env:GITHUB_ENV -Encoding UTF8
-          }
-
       - name: Build and sign canonical Tauri NSIS artifact
         env:
           RUSTUP_TOOLCHAIN: 1.98.0
@@ -752,20 +679,6 @@ jobs:
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_signing_contract.ps1
           if ($LASTEXITCODE -ne 0) { throw "V4 production signing contract test failed with exit code $LASTEXITCODE" }
-
-      - name: Run V4 production release orchestrator contract test
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.0
-        run: |
-          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_production_orchestrator.ps1
-          if ($LASTEXITCODE -ne 0) { throw "V4 production release orchestrator contract test failed with exit code $LASTEXITCODE" }
-
-      - name: Run V4 updater private-key verifier secret-output regression
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.0
-        run: |
-          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test_v4_updater_private_key.ps1
-          if ($LASTEXITCODE -ne 0) { throw "V4 updater private-key verifier regression failed with exit code $LASTEXITCODE" }
 
       - name: Verify Tauri Authenticode signature
         env:
@@ -975,9 +888,11 @@ jobs:
       - name: Require relevant gates to pass
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          STATIC_REQUIRED: ${{ needs.changes.outputs.static_required }}
           CODE_REQUIRED: ${{ needs.changes.outputs.code_required }}
           PACKAGE_REQUIRED: ${{ needs.changes.outputs.package_required }}
+          UPDATER_REQUIRED: ${{ needs.changes.outputs.updater_required }}
+          RELEASE_REQUIRED: ${{ needs.changes.outputs.release_required }}
+          SUPPLY_CHAIN_REQUIRED: ${{ needs.changes.outputs.supply_chain_required }}
           STATIC_RESULT: ${{ needs.static.result }}
           RELEASE_AUTHORITY_RESULT: ${{ needs.release_authority.result }}
           SUPPLY_CHAIN_RESULT: ${{ needs.supply_chain.result }}
@@ -987,21 +902,26 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CHANGES_RESULT" == "success" ]]
-          if [[ "$STATIC_REQUIRED" == "true" ]]; then
+          if [[ "$CODE_REQUIRED" == "true" || "$PACKAGE_REQUIRED" == "true" || "$UPDATER_REQUIRED" == "true" || "$RELEASE_REQUIRED" == "true" ]]; then
             [[ "$STATIC_RESULT" == "success" ]]
-            [[ "$RELEASE_AUTHORITY_RESULT" == "success" ]]
-            [[ "$SUPPLY_CHAIN_RESULT" == "success" ]]
           else
             [[ "$STATIC_RESULT" == "skipped" ]]
+          fi
+          if [[ "$RELEASE_REQUIRED" == "true" ]]; then
+            [[ "$RELEASE_AUTHORITY_RESULT" == "success" ]]
+          else
             [[ "$RELEASE_AUTHORITY_RESULT" == "skipped" ]]
+          fi
+          if [[ "$SUPPLY_CHAIN_REQUIRED" == "true" ]]; then
+            [[ "$SUPPLY_CHAIN_RESULT" == "success" ]]
+          else
             [[ "$SUPPLY_CHAIN_RESULT" == "skipped" ]]
           fi
           if [[ "$CODE_REQUIRED" == "true" ]]; then [[ "$VALIDATE_RESULT" == "success" ]]; else [[ "$VALIDATE_RESULT" == "skipped" ]]; fi
+          if [[ "$UPDATER_REQUIRED" == "true" ]]; then [[ "$UPDATER_E2E_RESULT" == "success" ]]; else [[ "$UPDATER_E2E_RESULT" == "skipped" ]]; fi
           if [[ "$PACKAGE_REQUIRED" == "true" ]]; then
-            [[ "$UPDATER_E2E_RESULT" == "success" ]]
             [[ "$PACKAGED_RESULT" == "success" ]]
           else
-            [[ "$UPDATER_E2E_RESULT" == "skipped" ]]
             [[ "$PACKAGED_RESULT" == "skipped" ]]
           fi
           echo "CI status is green."

@@ -113,8 +113,9 @@ setting; `PublishDraft` and `FinalVerify` require the returned release object
 to report `immutable=true`. Assets are uploaded only through the
 release-specific `upload_url` returned by the create-release response, and a
 duplicate-name/upload error is never repaired by deleting or replacing an
-asset. Any post-draft qualification failure therefore requires a new
-SemVer/RC.
+asset. A failed unpublished draft may be deleted and recreated with the same
+version after the candidate is fixed; once published or promoted, the release
+and tag are immutable and any fix requires a new SemVer/RC.
 
 ## Release pipeline and authority bootstrap
 
@@ -139,10 +140,11 @@ authority `main` history (including the channel directory contract) outside a
 production release dispatch. A release dispatch never creates the first
 authority commit as a side effect.
 
-The project's production release policy is `unsigned-zero-budget`: no
-Authenticode provider credentials are required; an
-optional real-signer seam is separately governed and is not represented as
-current production evidence. The retired v3 updater is preserved by Git
+The current pre-provider release policy is temporary `unsigned-zero-budget`: no
+Authenticode provider credentials are required in PR CI or ordinary CI, and an
+optional real-signer seam is separately governed. Production GA should use an approved real
+signer when a provider is selected and available; the release order is sign, verify, upload the
+signed draft, qualify the exact downloaded artifact, then publish. The retired v3 updater is preserved by Git
 history and the `v3-maintenance` line, but is not part of the current v4
 workspace or product graph.
 

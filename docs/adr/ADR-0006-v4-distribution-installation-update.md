@@ -133,10 +133,11 @@ A production `.env` file beside the executable is not part of the v4 user config
 
 Windows Authenticode and updater signing are separate boundaries:
 
-1. Under the permanent project release policy `unsigned-zero-budget`, project-owned Windows
+1. Under the current pre-provider `unsigned-zero-budget` policy, project-owned Windows
    executables and the canonical installer are deliberately Authenticode-unsigned. Qualification
    proves the expected `NotSigned` state and rejects test/self-signed or otherwise unexpected
-   signatures.
+   signatures. Production GA should move this boundary to an approved real signer when a provider
+   is selected and available; PR CI remains unsigned-fixture-only.
 2. Tauri updater artifacts use the Tauri updater signing mechanism and a new v4 update trust root.
 
 The zero-budget state is a publisher-identity and user-experience trade-off: Windows may show
@@ -187,7 +188,7 @@ V4 `xtask` responsibilities should include, as appropriate:
 - repository and dependency-policy checks;
 - packaged application smoke tests;
 - installer/update artifact existence and structure checks;
-- Authenticode state verification (`unsigned-zero-budget` in the current production policy);
+- Authenticode state verification (`unsigned-zero-budget` in the current pre-provider policy);
 - updater signature/metadata validation;
 - fresh-install qualification;
 - previous-v4 -> candidate-v4 update qualification;
@@ -207,8 +208,9 @@ V4 preserves the strongest v3 release discipline:
 7. make the published release immutable;
 8. promote stable/beta update metadata only after qualification/publish succeeds.
 
-A failed qualification produces a new version/RC. Published artifacts and tags are never repaired in
-place.
+A failed unpublished draft may be deleted and recreated with the same version
+after the candidate is fixed. Published artifacts and tags are never repaired
+in place and require a new version/RC.
 
 The production implementation is the dedicated manual workflow
 `.github/workflows/release-v4.yml`, which runs only on the accepted
@@ -290,8 +292,9 @@ qualification must prove that the canonical v4 product no longer depends on them
 
 V4 gains a smaller product-owned update attack surface, standard Windows installation/uninstallation,
 standard Tauri updater artifacts, clearer install/data ownership, and simpler runtime update code.
-The project accepts the absence of an Authenticode publisher identity under the permanent
-`unsigned-zero-budget` policy, including possible Unknown Publisher/SmartScreen warnings.
+The project temporarily accepts the absence of an Authenticode publisher identity under the
+pre-provider `unsigned-zero-budget` policy, including possible Unknown Publisher/SmartScreen
+warnings. This is a temporary distribution policy, not the target production GA architecture.
 
 The project accepts a deliberate compatibility break with v3 and the operational requirement to keep
 v3 release discovery isolated from v4. It also accepts that recovery from a bad v4 release is normally
@@ -312,8 +315,9 @@ arbitrary previous installation at per-file granularity.
 
 ## Required implementation gates before `v4.0.0` GA
 
-- the governed `unsigned-zero-budget` Authenticode state is verified for every shipped project PE and
-  the final NSIS installer; test/self-signed evidence is rejected;
+- an approved Authenticode signer is used for production GA artifacts, and the signed state is
+  independently verified for every shipped project PE and the final NSIS installer; PR CI may use
+  unsigned fixtures and test/self-signed evidence is rejected;
 - release SBOM and build provenance attestations are generated and verified;
 - exact draft artifacts complete fresh-install, update, uninstall/reinstall, Authenticode-state,
   Defender, and packaged GUI qualification;

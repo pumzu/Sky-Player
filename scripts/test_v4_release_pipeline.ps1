@@ -21,8 +21,39 @@ $fixtureCore = Get-Content -LiteralPath $fixtureCorePath -Raw
 $uploadHelper = Get-Content -LiteralPath $uploadHelperPath -Raw
 $workflow = Get-Content -LiteralPath $workflowPath -Raw
 $topologyWorkflow = Get-Content -LiteralPath $topologyWorkflowPath -Raw
+$testHarness = Get-Content -LiteralPath $PSCommandPath -Raw
 
 function Fail([string]$Message) { throw "FAILED: $Message" }
+
+function Get-SanitizedReleaseProbeOutput {
+    param(
+        [AllowEmptyString()]
+        [string]$Output
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Output)) {
+        return "(child produced no diagnostic output)"
+    }
+
+    $sanitized = $Output
+    $sanitized = [regex]::Replace(
+        $sanitized,
+        '(?ms)-----BEGIN [^-]+-----.*?-----END [^-]+-----',
+        '[REDACTED KEY MATERIAL]'
+    )
+    foreach ($secretName in @(
+        'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
+        'TAURI_SIGNING_PRIVATE_KEY',
+        'V4_RELEASE_AUTHORITY_TOKEN'
+    )) {
+        $sanitized = [regex]::Replace(
+            $sanitized,
+            "(?im)($([regex]::Escape($secretName))\s*[=:]\s*)[^\s\r\n]+",
+            '$1[REDACTED]'
+        )
+    }
+    return $sanitized.Trim()
+}
 
 if ($fixtureWrapper.Contains("BundleDir") -or $fixtureCore.Contains("BundleDir")) {
     Fail "updater fixture must not use the ambiguous BundleDir contract"
@@ -213,7 +244,9 @@ foreach ($marker in @(
     'DownloadDraft', 'QualifyDownloaded', 'RecordAttestations', 'PublishDraft',
     'PromoteMetadata', 'FinalVerify', 'unsigned-zero-budget',
     'metadata promotion is forbidden before immutable publication',
-    'authority already contains tag', 'existing releases are never moved or replaced',
+    'authority already contains published release/tag', 'unpublished draft reuse',
+    'published tags are immutable', 'git/refs/tags/$Tag',
+    'GitHub''s successful DELETE endpoints return an empty body',
     'Get-FileHash', 'verify-signature', 'sbom', 'verify-tauri-bundle',
     'current-user', 'active-playback-install-rejected', 'upload_url',
     'immutable-releases', 'Assert-ImmutableRelease', 'Start-MpScan',
@@ -222,9 +255,20 @@ foreach ($marker in @(
     'v4_updater_credential_broker.ps1',
     'docs/releases/v$Version.md',
     'release notes path must match the requested version',
-    'release notes heading must match the requested version'
+    'release notes heading must match the requested version',
+    '(?m)^# [^\r\n]+(?=\r?$)'
 )) {
     if (-not $pipeline.Contains($marker)) { Fail "pipeline marker is missing: $marker" }
+}
+foreach ($marker in @(
+    'function Get-SanitizedReleaseProbeOutput',
+    'version-check.log',
+    'ChildOutput',
+    'VersionCheckLog'
+)) {
+    if (-not $testHarness.Contains($marker)) {
+        Fail "release-note probe diagnostic marker is missing: $marker"
+    }
 }
 
 function Invoke-ReleaseNotesValidation([string]$NotesPath) {
@@ -248,8 +292,26 @@ function Invoke-ReleaseNotesValidation([string]$NotesPath) {
             "-ReleaseNotesPath", $NotesPath,
             "-PublicationDateUtc", "2026-01-01T00:00:00Z"
         )
-        $output = (& pwsh @arguments 2>&1 | Out-String)
-        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+        $childOutput = (& pwsh @arguments 2>&1 | Out-String)
+        $exitCode = [int]$LASTEXITCODE
+        $versionCheckPath = Join-Path $probeRoot "version-check.log"
+        $versionCheckOutput = if (Test-Path -LiteralPath $versionCheckPath -PathType Leaf) {
+            Get-Content -LiteralPath $versionCheckPath -Raw -ErrorAction SilentlyContinue
+        } else {
+            ""
+        }
+        $diagnostics = @(
+            "child output:`n$(Get-SanitizedReleaseProbeOutput $childOutput)"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($versionCheckOutput)) {
+            $diagnostics += "version-check.log:`n$(Get-SanitizedReleaseProbeOutput $versionCheckOutput)"
+        }
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            Output = ($diagnostics -join "`n")
+            ChildOutput = Get-SanitizedReleaseProbeOutput $childOutput
+            VersionCheckLog = Get-SanitizedReleaseProbeOutput $versionCheckOutput
+        }
     } finally {
         if (Test-Path -LiteralPath $probeRoot) {
             Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -264,7 +326,7 @@ $packageVersion = [regex]::Match(
 $validNotesPath = Join-Path $repoRoot "docs/releases/v$packageVersion.md"
 $validNotesProbe = Invoke-ReleaseNotesValidation $validNotesPath
 if ($validNotesProbe.ExitCode -ne 0 -or $validNotesProbe.Output -notmatch "V4 release identity: PASS") {
-    Fail "canonical release notes were rejected by ValidateRequest"
+    Fail "canonical release notes were rejected by ValidateRequest. Diagnostics:`n$($validNotesProbe.Output)"
 }
 $wrongNotes = Get-ChildItem -LiteralPath (Join-Path $repoRoot "docs/releases") -Filter "v4.0.0-rc.*.md" |
     Where-Object { $_.Name -ne "v$packageVersion.md" } |
