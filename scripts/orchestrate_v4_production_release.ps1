@@ -178,11 +178,11 @@ try {
     # Validate UpdaterPrivateKeyPath (must exist and must NOT be inside repository workspace)
     $resolvedKeyPath = (Resolve-Path -LiteralPath $UpdaterPrivateKeyPath -ErrorAction Stop).Path
     if (-not (Test-Path -LiteralPath $resolvedKeyPath -PathType Leaf)) {
-        throw "UpdaterPrivateKeyPath does not exist: $UpdaterPrivateKeyPath"
+        throw "UpdaterPrivateKeyPath does not exist"
     }
     $repoPrefix = $repoRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     if ($resolvedKeyPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Security violation: UpdaterPrivateKeyPath must remain outside the repository workspace ($resolvedKeyPath)"
+        throw "Security violation: updater private key must remain outside the repository workspace"
     }
 
     # Resolve password securely without logging or CLI flag exposure

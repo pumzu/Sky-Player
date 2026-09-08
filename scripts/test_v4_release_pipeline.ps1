@@ -219,9 +219,59 @@ foreach ($marker in @(
     'immutable-releases', 'Assert-ImmutableRelease', 'Start-MpScan',
     'previous-v4-to-exact-downloaded-candidate-update',
     'selftest-update-active-playback', 'scan_performed',
-    'v4_updater_credential_broker.ps1'
+    'v4_updater_credential_broker.ps1',
+    'docs/releases/v$Version.md',
+    'release notes path must match the requested version',
+    'release notes heading must match the requested version'
 )) {
     if (-not $pipeline.Contains($marker)) { Fail "pipeline marker is missing: $marker" }
+}
+
+function Invoke-ReleaseNotesValidation([string]$NotesPath) {
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) ("sky-v4-release-notes-probe-" + [guid]::NewGuid().ToString("N"))
+    $packageManifest = Get-Content -LiteralPath (Join-Path $repoRoot "desktop/src-tauri/Cargo.toml") -Raw
+    $versionMatch = [regex]::Match($packageManifest, '(?m)^version\s*=\s*"([^"]+)"')
+    if (-not $versionMatch.Success) { Fail "release notes probe could not read package version" }
+    $sourceSha = (& git rev-parse HEAD).Trim()
+    try {
+        $arguments = @(
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            "-File", $pipelinePath,
+            "-State", "ValidateRequest",
+            "-Version", $versionMatch.Groups[1].Value,
+            "-Channel", "beta",
+            "-Tag", "v$($versionMatch.Groups[1].Value)",
+            "-SourceSha", $sourceSha,
+            "-WorkflowSha", $sourceSha,
+            "-StateRoot", $probeRoot,
+            "-ReleaseNotesPath", $NotesPath,
+            "-PublicationDateUtc", "2026-01-01T00:00:00Z"
+        )
+        $output = (& pwsh @arguments 2>&1 | Out-String)
+        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+    } finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+$packageVersion = [regex]::Match(
+    (Get-Content -LiteralPath (Join-Path $repoRoot "desktop/src-tauri/Cargo.toml") -Raw),
+    '(?m)^version\s*=\s*"([^"]+)"'
+).Groups[1].Value
+$validNotesPath = Join-Path $repoRoot "docs/releases/v$packageVersion.md"
+$validNotesProbe = Invoke-ReleaseNotesValidation $validNotesPath
+if ($validNotesProbe.ExitCode -ne 0 -or $validNotesProbe.Output -notmatch "V4 release identity: PASS") {
+    Fail "canonical release notes were rejected by ValidateRequest"
+}
+$wrongNotes = Get-ChildItem -LiteralPath (Join-Path $repoRoot "docs/releases") -Filter "v4.0.0-rc.*.md" |
+    Where-Object { $_.Name -ne "v$packageVersion.md" } |
+    Select-Object -First 1
+if ($null -eq $wrongNotes) { Fail "release notes probe requires an existing mismatched v4 notes file" }
+$wrongNotesProbe = Invoke-ReleaseNotesValidation $wrongNotes.FullName
+if ($wrongNotesProbe.ExitCode -eq 0) {
+    Fail "ValidateRequest accepted release notes for a different version"
 }
 
 foreach ($brokerFile in @(
@@ -247,6 +297,7 @@ foreach ($marker in @(
     'actions/attest@',
     '--source-digest $env:GITHUB_SHA',
     'Initialize release state root', 'RUNNER_TEMP', 'GITHUB_RUN_ID', 'GITHUB_ENV',
+    'Mask updater key path', '::add-mask::$env:V4_UPDATER_PRIVATE_KEY_PATH',
     'RecordAttestations', 'PublishDraft', 'PromoteMetadata', 'FinalVerify'
 )) {
     if (-not $workflow.Contains($marker)) { Fail "workflow marker is missing: $marker" }
