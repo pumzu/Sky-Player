@@ -14,17 +14,45 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
+function Redact-UpdaterVerifierOutput {
+    param(
+        [AllowEmptyString()]
+        [string]$Output,
+        [string]$KeyFile,
+        [string]$Password
+    )
+
+    $redacted = $Output
+    $keyCandidates = @(
+        $KeyFile,
+        [IO.Path]::GetFullPath($KeyFile),
+        ([IO.Path]::GetFullPath($KeyFile) -replace '\\', '/')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($candidate in $keyCandidates) {
+        $redacted = $redacted -replace [regex]::Escape($candidate), '[REDACTED]'
+    }
+    if (-not [string]::IsNullOrEmpty($Password)) {
+        $redacted = $redacted.Replace($Password, '[REDACTED]')
+    }
+    return $redacted
+}
+
 # 1. Resolve key path: strictly require a file path (no raw key in env vars or command lines)
-$keyFile = if (-not [string]::IsNullOrWhiteSpace($KeyPath)) {
-    (Resolve-Path -LiteralPath $KeyPath -ErrorAction Stop).Path
-} elseif (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
-    (Resolve-Path -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH -ErrorAction Stop).Path
-} else {
-    throw "No updater private key path specified. Provide -KeyPath <path> or set TAURI_SIGNING_PRIVATE_KEY_PATH environment variable."
+try {
+    $keyFile = if (-not [string]::IsNullOrWhiteSpace($KeyPath)) {
+        (Resolve-Path -LiteralPath $KeyPath -ErrorAction Stop).Path
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
+        (Resolve-Path -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH -ErrorAction Stop).Path
+    } else {
+        throw "No updater private key path specified"
+    }
+} catch {
+    throw "Unable to resolve updater private key file"
 }
 
 if (-not (Test-Path -LiteralPath $keyFile -PathType Leaf)) {
-    throw "Private key file does not exist: $keyFile"
+    throw "Private key file does not exist"
 }
 
 # 2. Resolve password: prefer credential broker if requested, or specified environment variable, or secure interactive prompt
@@ -55,12 +83,10 @@ $prevPwd = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $passwordValue
 try {
     # The child owns verification and emits only sanitized status. Keep a final
-    # redaction guard around the boundary so this process never forwards a
-    # password if a dependency unexpectedly includes it in diagnostic output.
+    # redaction guard around the boundary so this process never forwards a key
+    # path or password if a dependency unexpectedly includes either in output.
     $verificationOutput = & cargo xtask updater-trust verify-private-key --key-file $keyFile 2>&1 | Out-String
-    if (-not [string]::IsNullOrEmpty($passwordValue)) {
-        $verificationOutput = $verificationOutput.Replace($passwordValue, "[REDACTED]")
-    }
+    $verificationOutput = Redact-UpdaterVerifierOutput -Output $verificationOutput -KeyFile $keyFile -Password $passwordValue
     Write-Output $verificationOutput.TrimEnd()
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[FAIL] Local updater private key does not match canonical production v4 root"
@@ -69,10 +95,7 @@ try {
     Write-Host "[PASS] Local updater private key matches canonical production v4 root"
     exit 0
 } catch {
-    $errorMessage = $_.Exception.Message
-    if (-not [string]::IsNullOrEmpty($passwordValue)) {
-        $errorMessage = $errorMessage.Replace($passwordValue, "[REDACTED]")
-    }
+    $errorMessage = Redact-UpdaterVerifierOutput -Output $_.Exception.Message -KeyFile $keyFile -Password $passwordValue
     Write-Host "[FAIL] Updater private key verification failed: $errorMessage"
     exit 1
 } finally {

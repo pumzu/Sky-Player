@@ -38,6 +38,24 @@ function Restore-SavedEnvironment {
     }
 }
 
+function Assert-NoThrowawayKeyPath {
+    param(
+        [string]$Name,
+        [string]$Output
+    )
+
+    $candidates = @(
+        $throwawayKeyPath,
+        [IO.Path]::GetFullPath($throwawayKeyPath),
+        ([IO.Path]::GetFullPath($throwawayKeyPath) -replace '\\', '/')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        if ($Output.IndexOf($candidate, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "FAILED: $Name emitted the throwaway updater key path"
+        }
+    }
+}
+
 try {
     # Ensure runner environment is clean of inherited signing keys before tests run
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
@@ -240,6 +258,7 @@ try {
     if ($out6 -notmatch "Pre-packaging updater key verification failed") {
         throw "FAILED: Did not fail closed on updater key pre-flight check. Actual output:`n$out6"
     }
+    Assert-NoThrowawayKeyPath -Name 'Orchestrator mismatch path' -Output $out6
     Write-Host "Test 6: PASS"
 
     # Test 7: Secret values are never emitted by error paths
@@ -263,6 +282,7 @@ try {
     if ($out7.Contains($secretPassword)) {
         throw "FAILED: Secret password was leaked to output/error stream!"
     }
+    Assert-NoThrowawayKeyPath -Name 'Orchestrator secret-error path' -Output $out7
     Write-Host "Test 7: PASS"
 
     # Test 8: Inherited signing key environment fails closed without leaking secret
@@ -356,6 +376,7 @@ try {
     if (-not $out9.Contains($keyFailMarker)) {
         throw "FAILED: Pre-packaging updater key verification failure marker not found. Actual output:`n$out9"
     }
+    Assert-NoThrowawayKeyPath -Name 'Orchestrator purge/key-failure path' -Output $out9
 
     $purgeIndex = $out9.IndexOf($purgeMarker)
     $keyFailIndex = $out9.IndexOf($keyFailMarker)
