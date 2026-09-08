@@ -234,12 +234,13 @@ function Invoke-ReleaseNotesValidation([string]$NotesPath) {
     if (-not $versionMatch.Success) { Fail "release notes probe could not read package version" }
     $sourceSha = (& git rev-parse HEAD).Trim()
     try {
+        $probeChannel = if ($versionMatch.Groups[1].Value.Contains("-")) { "beta" } else { "stable" }
         $arguments = @(
             "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-File", $pipelinePath,
             "-State", "ValidateRequest",
             "-Version", $versionMatch.Groups[1].Value,
-            "-Channel", "beta",
+            "-Channel", $probeChannel,
             "-Tag", "v$($versionMatch.Groups[1].Value)",
             "-SourceSha", $sourceSha,
             "-WorkflowSha", $sourceSha,

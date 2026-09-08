@@ -74,6 +74,7 @@ try {
         throw "Failed to parse Cargo.toml version"
     }
     $currentVersion = $Matches[1].Trim()
+    $currentChannel = if ($currentVersion.Contains("-")) { "beta" } else { "stable" }
 
     . (Join-Path $PSScriptRoot "v4_qualification_evidence.ps1")
 
@@ -141,7 +142,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha "0000000000000000000000000000000000000000" `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -168,7 +169,7 @@ try {
             -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
             -ExpectedSourceSha $currentSha `
             -Version $currentVersion `
-            -Channel "beta" `
+            -Channel $currentChannel `
             -UpdaterPrivateKeyPath $throwawayKeyPath `
             -AuthenticodeProvider "custom" `
             -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -196,7 +197,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version "9.9.9" `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -206,19 +207,25 @@ try {
         throw "FAILED: Did not fail closed on Cargo.toml version mismatch"
     }
 
-    # 4b. Stable channel rejects prerelease version
+    # 4b. The opposite channel policy rejects the current version
+    $invalidChannel = if ($currentChannel -eq "stable") { "beta" } else { "stable" }
+    $expectedPolicyError = if ($invalidChannel -eq "stable") {
+        "Channel 'stable' rejects prerelease version"
+    } else {
+        "Channel 'beta' requires a prerelease SemVer version"
+    }
     $out4b = & pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "stable" `
+        -Channel $invalidChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
         -AuthenticodeProviderScript $dummyProviderScript 2>&1 | Out-String
-    if ($LASTEXITCODE -eq 0) { throw "FAILED: Orchestrator accepted prerelease version on stable channel" }
-    if ($out4b -notmatch "Channel 'stable' rejects prerelease version") {
-        throw "FAILED: Did not fail closed on stable channel with prerelease version"
+    if ($LASTEXITCODE -eq 0) { throw "FAILED: Orchestrator accepted current version on invalid channel" }
+    if ($out4b -notmatch [regex]::Escape($expectedPolicyError)) {
+        throw "FAILED: Did not fail closed on invalid channel policy"
     }
     Write-Host "Test 4: PASS"
 
@@ -228,7 +235,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -247,7 +254,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -270,7 +277,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -UpdaterPasswordEnv "MY_TEST_KEY_PASSWORD" `
         -AuthenticodeProvider "custom" `
@@ -295,7 +302,7 @@ try {
             -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
             -ExpectedSourceSha $currentSha `
             -Version $currentVersion `
-            -Channel "beta" `
+            -Channel $currentChannel `
             -UpdaterPrivateKeyPath $throwawayKeyPath `
             -AuthenticodeProvider "custom" `
             -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -320,7 +327,7 @@ try {
             -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
             -ExpectedSourceSha $currentSha `
             -Version $currentVersion `
-            -Channel "beta" `
+            -Channel $currentChannel `
             -UpdaterPrivateKeyPath $throwawayKeyPath `
             -AuthenticodeProvider "custom" `
             -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -357,7 +364,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -472,7 +479,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -490,7 +497,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint "0123456789ABCDEF0123456789ABCDEF01234567" `
@@ -515,7 +522,7 @@ try {
         -File (Join-Path $PSScriptRoot "orchestrate_v4_production_release.ps1") `
         -ExpectedSourceSha $currentSha `
         -Version $currentVersion `
-        -Channel "beta" `
+        -Channel $currentChannel `
         -UpdaterPrivateKeyPath $throwawayKeyPath `
         -AuthenticodeProvider "custom" `
         -ApprovedSignerThumbprint $testThumbprint `
