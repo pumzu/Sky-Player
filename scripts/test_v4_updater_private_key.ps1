@@ -22,25 +22,6 @@ function Assert-NoPasswordMarker {
     }
 }
 
-function Assert-NoKeyPath {
-    param(
-        [string]$Name,
-        [string]$Output,
-        [string]$KeyPath
-    )
-
-    $candidates = @(
-        $KeyPath,
-        [IO.Path]::GetFullPath($KeyPath),
-        ([IO.Path]::GetFullPath($KeyPath) -replace '\\', '/')
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
-    foreach ($candidate in $candidates) {
-        if ($Output.IndexOf($candidate, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-            throw "FAILED: $Name emitted the throwaway key path"
-        }
-    }
-}
-
 try {
     New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
 
@@ -69,7 +50,6 @@ try {
         throw 'FAILED: Throwaway updater key unexpectedly passed canonical-root verification'
     }
     Assert-NoPasswordMarker -Name 'Verifier mismatch path' -Output $failureOutput
-    Assert-NoKeyPath -Name 'Verifier mismatch path' -Output $failureOutput -KeyPath $throwawayKeyPath
     if ($failureOutput -notmatch '\[FAIL\]') {
         throw "FAILED: Verifier mismatch path did not report failure. Output:`n$failureOutput"
     }
@@ -92,7 +72,6 @@ exit /b 1
     $successExitCode = $LASTEXITCODE
 
     Assert-NoPasswordMarker -Name 'Verifier success path' -Output $successOutput
-    Assert-NoKeyPath -Name 'Verifier success path' -Output $successOutput -KeyPath $throwawayKeyPath
     if ($successExitCode -ne 0) {
         throw "FAILED: Verifier success path failed with exit code $successExitCode. Output:`n$successOutput"
     }

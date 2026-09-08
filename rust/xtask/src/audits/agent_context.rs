@@ -40,9 +40,8 @@ const RETIRED_PATHS: &[&str] = &[
 ];
 
 const SECURITY_OWNED_SURFACES: &[&str] = &[
-    "scripts/audit_security_mandates.py",
     ".config/security_audit_baseline.json",
-    ".github/workflows/release.yml",
+    ".github/workflows/release-v4.yml",
 ];
 const SCAN_ROOTS: &[&str] = &["src", "rust", "tests", "scripts", "docs", ".github", "site"];
 const GENERATED_DIRS: &[&str] = &[
@@ -50,9 +49,6 @@ const GENERATED_DIRS: &[&str] = &[
     ".venv",
     ".astro",
     ".cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "__pycache__",
     "node_modules",
     "target",
     "dist",

@@ -255,8 +255,12 @@ function Invoke-AuthorityApi {
             Fail "authority API request failed"
         }
         if ($BinaryOutput) { return $null }
-        if ($Raw) { return ($authorityApiResult -join "`n") }
-        return (($authorityApiResult -join "`n") | ConvertFrom-Json)
+        $responseText = ($authorityApiResult -join "`n")
+        if ($Raw) { return $responseText }
+        # GitHub's successful DELETE endpoints return an empty body. Treat that
+        # as a successful request instead of attempting to parse empty JSON.
+        if ([string]::IsNullOrWhiteSpace($responseText)) { return $null }
+        return ($responseText | ConvertFrom-Json)
     } finally {
         Remove-Item -LiteralPath $errorPath -Force -ErrorAction SilentlyContinue
     }
@@ -435,9 +439,29 @@ function Get-State {
 
 function Assert-NoExistingAuthorityTag {
     $release = Invoke-AuthorityApi -Arguments @("api", "repos/$authorityRepository/releases/tags/$Tag") -AllowNotFound
-    if ($null -ne $release) { Fail "authority already contains release tag $Tag; existing releases are never moved or replaced" }
+    if ($null -ne $release) {
+        $publishedAt = [string]$release.published_at
+        if (-not [bool]$release.draft -or -not [string]::IsNullOrWhiteSpace($publishedAt)) {
+            Fail "authority already contains published release/tag $Tag; published releases and tags are immutable"
+        }
+        $releaseId = [int64]$release.id
+        Invoke-AuthorityApi -Arguments @(
+            "api", "--method", "DELETE", "repos/$authorityRepository/releases/$releaseId"
+        ) -AllowNotFound | Out-Null
+        $runId = if ([string]::IsNullOrWhiteSpace($env:GITHUB_RUN_ID)) { "local" } else { $env:GITHUB_RUN_ID }
+        Write-Host "V4 unpublished draft reuse: deleted prior unpublished draft for $Tag (source_sha=$($SourceSha.ToLowerInvariant()), run_id=$runId)"
+    }
     $ref = Invoke-AuthorityApi -Arguments @("api", "repos/$authorityRepository/git/ref/tags/$Tag") -AllowNotFound
-    if ($null -ne $ref) { Fail "authority already contains tag $Tag; a new SemVer/RC is required" }
+    if ($null -ne $ref) {
+        if ($null -eq $release) {
+            Fail "authority already contains tag $Tag without an unpublished draft; published tags are immutable"
+        }
+        Invoke-AuthorityApi -Arguments @(
+            "api", "--method", "DELETE", "repos/$authorityRepository/git/refs/tags/$Tag"
+        ) -AllowNotFound | Out-Null
+        $remainingRef = Invoke-AuthorityApi -Arguments @("api", "repos/$authorityRepository/git/ref/tags/$Tag") -AllowNotFound
+        if ($null -ne $remainingRef) { Fail "unpublished draft tag $Tag could not be removed before recreation" }
+    }
 }
 
 function Invoke-CreateDraft {

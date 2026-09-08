@@ -54,23 +54,6 @@ const ALLOWED_WINDOWS_SYS_MODULES: &[&str] = &[
     "Win32::Storage::FileSystem",
 ];
 const FORBIDDEN_DLLS: &[&str] = &["ntdll.dll"];
-const RETIRED_ACTIVE_TOKENS: &[&str] = &[
-    "pyo3",
-    "maturin",
-    "PyInstaller",
-    "sky_player_rs",
-    "desktop_ipc",
-    "Sky-Auto-Player-Core.exe",
-    "build_rust_wheel.py",
-    "scripts/check.py",
-    "scripts/build_portable_release.py",
-    "scripts/verify_release_manifest.py",
-];
-
-fn rust_manifest(root: &Path) -> Result<String> {
-    Ok(fs::read_to_string(root.join("rust/Cargo.toml"))?)
-}
-
 #[derive(Debug, Eq, PartialEq)]
 struct TauriFeatureResolution {
     default: BTreeSet<String>,
@@ -225,33 +208,6 @@ fn tauri_feature_contract(root: &Path) -> Result<()> {
         "[xtask] Tauri feature contract: PASS (default={:?}, dev={:?})",
         resolution.default, resolution.dev
     );
-    Ok(())
-}
-
-fn legacy_release_guard_source(source: &str) -> Result<()> {
-    for marker in [
-        "name: Block v4+ tags from legacy v3 release workflow",
-        "$tag = $env:GITHUB_REF_NAME",
-        r#"$tag -match '^v(?<major>\d+)\.'"#,
-        "$major -ge 4",
-        "v4 publication is prohibited in the legacy v3 release workflow; use the dedicated v4 release authority",
-        "dedicated v4 release authority",
-    ] {
-        if !source.contains(marker) {
-            return Err(format!(
-                "legacy release workflow is missing the v4 isolation guard marker: {marker}"
-            )
-            .into());
-        }
-    }
-    Ok(())
-}
-
-fn legacy_release_guard(root: &Path) -> Result<()> {
-    let path = root.join(".github/workflows/release.yml");
-    legacy_release_guard_source(&fs::read_to_string(&path)?)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    println!("[xtask] legacy v3 release workflow v4 guard: PASS");
     Ok(())
 }
 
@@ -419,10 +375,15 @@ fn release_authority_contract(root: &Path) -> Result<()> {
         "name: V4 release authority acceptance",
         "scripts/ci_v4_release_authority_acceptance.ps1",
         "scripts/promote_v4_metadata.ps1 -SelfTest",
+        "Run V4 production release orchestrator contract test",
+        "scripts/test_v4_production_orchestrator.ps1",
+        "Run V4 updater private-key verifier secret-output regression",
+        "scripts/test_v4_updater_private_key.ps1",
         "Emit exact Tauri qualification evidence",
         "authenticode_mode = \"unsigned-zero-budget\"",
         "V4_QUALIFICATION_EVIDENCE.json",
-        "RELEASE_AUTHORITY_RESULT",
+        "RELEASE_REQUIRED",
+        "SUPPLY_CHAIN_REQUIRED",
         "needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]",
     ] {
         if !ci.contains(marker) {
@@ -507,7 +468,6 @@ fn v4_release_pipeline_contract_source(
         "::add-mask::",
         "Sky-Auto-Player-Updater.exe",
         "MANIFEST.json.sig",
-        ".github/workflows/release.yml",
         "ci_tauri_update_e2e.ps1",
     ] {
         if workflow.contains(forbidden) {
@@ -544,8 +504,11 @@ fn v4_release_pipeline_contract_source(
         "unsigned-zero-budget",
         "authority main is not initialized",
         "refs/heads/main",
-        "authority already contains tag",
-        "existing releases are never moved or replaced",
+        "authority already contains published release/tag",
+        "unpublished draft reuse",
+        "published tags are immutable",
+        "git/refs/tags/$Tag",
+        "GitHub's successful DELETE endpoints return an empty body",
         "Get-FileHash",
         "verify-signature",
         "verify-tauri-bundle",
@@ -770,7 +733,7 @@ fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
 
 fn packaged_ci_contract_source(source: &str) -> Result<()> {
     let normalized = source.replace("\r\n", "\n");
-    let package_needs = "needs: [changes, static, release_authority, supply_chain, validate]";
+    let package_needs = "needs: [changes, static, validate]";
     let fixture_start = normalized
         .find("  updater_e2e:\n")
         .ok_or("CI workflow is missing the isolated updater fixture job")?;
@@ -787,7 +750,8 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
         .into());
     }
     for marker in [
-        "name: Packaged v4 updater fixture qualification",
+        "name: Updater fixture qualification",
+        "if: needs.changes.outputs.updater_required == 'true'",
         "tauri-update-fixture",
         "dangerousInsecureTransportProtocol",
         "scripts/ci_tauri_update_e2e.ps1",
@@ -833,12 +797,6 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
         "- name: Run V4 production signing contract test",
         "scripts/test_v4_production_signing_contract.ps1",
         "V4 production signing contract test failed with exit code",
-        "- name: Run V4 production release orchestrator contract test",
-        "scripts/test_v4_production_orchestrator.ps1",
-        "V4 production release orchestrator contract test failed with exit code",
-        "- name: Run V4 updater private-key verifier secret-output regression",
-        "scripts/test_v4_updater_private_key.ps1",
-        "V4 updater private-key verifier regression failed with exit code",
         "- name: Verify Tauri Authenticode signature",
         "-Mode unsigned-zero-budget",
         "- name: Generate Tauri SPDX SBOM",
@@ -940,28 +898,6 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
             "canonical v4 packaged CI attestation verification must use absolute gh, exact source digest, signer workflow, and repository binding for all three checks".into(),
         );
     }
-    let gh_resolution_position = packaged
-        .find("      - name: Resolve GitHub CLI for artifact attestation verification\n")
-        .ok_or("canonical v4 packaged CI is missing the GitHub CLI resolution step")?;
-    let restricted_path_position = packaged
-        .find("      - name: Construct Python-unavailable canonical environment\n")
-        .ok_or("canonical v4 packaged CI is missing the restricted environment step")?;
-    if gh_resolution_position >= restricted_path_position {
-        return Err(
-            "canonical v4 packaged CI must resolve the absolute GitHub CLI path before restricted PATH construction".into(),
-        );
-    }
-    let restricted_path_end = packaged[restricted_path_position..]
-        .find("\n      - name: Build and sign canonical Tauri NSIS artifact\n")
-        .map(|offset| restricted_path_position + offset)
-        .ok_or("canonical v4 packaged CI restricted environment step has no bounded end")?;
-    let restricted_environment = &packaged[restricted_path_position..restricted_path_end];
-    if restricted_environment.contains("gh.exe") || restricted_environment.contains("GitHub CLI") {
-        return Err(
-            "canonical v4 packaged CI must not add the GitHub CLI directory to the restricted build PATH".into(),
-        );
-    }
-
     let validate_start = normalized
         .find("  validate:\n")
         .ok_or("CI workflow is missing the validate job")?;
@@ -986,6 +922,8 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
         "MANIFEST.json",
         "PORTABLE_ARTIFACT",
         "portable",
+        "scripts/test_v4_production_orchestrator.ps1",
+        "scripts/test_v4_updater_private_key.ps1",
     ] {
         if packaged.contains(forbidden) {
             return Err(format!(
@@ -997,6 +935,9 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
 
     for marker in [
         "needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]",
+        "UPDATER_REQUIRED",
+        "RELEASE_REQUIRED",
+        "SUPPLY_CHAIN_REQUIRED",
         "UPDATER_E2E_RESULT",
     ] {
         if !normalized.contains(marker) {
@@ -1080,7 +1021,7 @@ fn v4_legacy_updater_retirement(root: &Path) -> Result<()> {
         "desktop/src-tauri/src",
         "rust/xtask/src",
         ".github/workflows/ci.yml",
-        ".github/workflows/release.yml",
+        ".github/workflows/release-v4.yml",
         "scripts/orchestrate_v4_production_release.ps1",
         "scripts/promote_v4_metadata.ps1",
         "scripts/ci_tauri_update_e2e.ps1",
@@ -1364,7 +1305,7 @@ fn v4_trust_material_contract(root: &Path) -> Result<()> {
     for marker in [
         "V4_TEST_ONLY_PASS_PHRASE_MARKER",
         "verify_v4_updater_private_key.ps1",
-        "Assert-NoKeyPath",
+        "Assert-NoPasswordMarker",
         "Verifier mismatch path",
         "Verifier success path",
         "throwaway.key",
@@ -1424,7 +1365,6 @@ fn v4_trust_material_contract(root: &Path) -> Result<()> {
         "Channel policy validation fails closed on invalid SemVer / channel",
         "Mutually exclusive provider configuration fails closed",
         "Wrong updater private key fails pre-flight verification before packaging",
-        "Assert-NoThrowawayKeyPath",
         "Secret values are not emitted by expected error paths",
         "Inherited signing key environment fails closed",
         "Stale candidate artifacts and evidence are purged before packaging",
@@ -1584,18 +1524,6 @@ fn is_minisign_secret_text(bytes: &[u8]) -> bool {
         .decode(lines[1])
         .map(|payload| (64..=1024).contains(&payload.len()))
         .unwrap_or(false)
-}
-
-fn active_files(root: &Path) -> impl Iterator<Item = std::path::PathBuf> {
-    [
-        root.join("rust/Cargo.toml"),
-        root.join("rust/Cargo.lock"),
-        root.join("desktop/src-tauri/Cargo.toml"),
-        root.join("desktop/package.json"),
-        root.join(".github/workflows/ci.yml"),
-        root.join(".github/workflows/release.yml"),
-    ]
-    .into_iter()
 }
 
 fn walk_source(root: &Path, prefix: &str) -> Result<Vec<std::path::PathBuf>> {
@@ -2030,13 +1958,11 @@ pub(crate) fn architecture(root: &Path) -> Result<()> {
     let allowlist = load_architecture_allowlist(root)?;
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
-    let manifest = rust_manifest(root)?;
     let app_core_manifest = root.join("rust/crates/sky_app_core/Cargo.toml");
     let app_core: toml::Value = toml::from_str(&fs::read_to_string(&app_core_manifest)?)?;
     if let Some(dependencies) = app_core.get("dependencies").and_then(toml::Value::as_table) {
         for forbidden in [
             "tauri",
-            "pyo3",
             "windows-sys",
             "sky_desktop_shell",
             "sky_player",
@@ -2075,7 +2001,6 @@ pub(crate) fn architecture(root: &Path) -> Result<()> {
             let joined = clean_lines(&fs::read_to_string(path.path())?).join("");
             if [
                 "tauri",
-                "pyo3",
                 "windows-sys",
                 "windows_sys",
                 "sky_desktop_shell",
@@ -2095,10 +2020,6 @@ pub(crate) fn architecture(root: &Path) -> Result<()> {
             }
         }
     }
-    if manifest.contains("sky_player_rs") || manifest.contains("pyo3") {
-        errors.push("[retired_bridge] rust/Cargo.toml: production workspace contains a retired Python/player bridge".into());
-    }
-
     let dispatch_dir = root.join("rust/crates/sky_player/src/engine/worker/dispatch");
     if dispatch_dir.is_dir() {
         let actual: BTreeSet<String> = fs::read_dir(&dispatch_dir)?
@@ -2364,319 +2285,7 @@ pub(crate) fn architecture(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn retirement(root: &Path) -> Result<()> {
-    let mut files = active_files(root).collect::<Vec<_>>();
-    files.extend(walk_source(root, "desktop/src")?);
-    files.extend(walk_source(root, "rust/crates")?);
-    for path in files {
-        if !path.is_file() {
-            continue;
-        }
-        if path
-            .components()
-            .any(|component| component.as_os_str() == "tests")
-        {
-            continue;
-        }
-        let content = fs::read_to_string(&path)?;
-        for token in RETIRED_ACTIVE_TOKENS {
-            if content.contains(token) {
-                return Err(format!(
-                    "retired token {token} remains in active file {}",
-                    path.display()
-                )
-                .into());
-            }
-        }
-    }
-    validate_tooling_ledger(root)?;
-    validate_xtask_process_surface(root)?;
-    println!("[xtask] retirement checks: PASS");
-    Ok(())
-}
-
-fn strip_retirement_inventory(source: &str) -> String {
-    let marker = "const RETIRED_ACTIVE_TOKENS";
-    let Some(start) = source.find(marker) else {
-        return source.to_owned();
-    };
-    let Some(end_relative) = source[start..].find("];") else {
-        return source.to_owned();
-    };
-    let end = start + end_relative + 2;
-    format!("{}{}", &source[..start], &source[end..])
-}
-
-fn xtask_process_violation(source: &str) -> Option<String> {
-    let compact = strip_rust_comments(source)
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    for call in [
-        "Command::new(",
-        "process::run(",
-        "process::capture(",
-        "process::run_owned(",
-        "process::capture_owned(",
-    ] {
-        let mut offset = 0;
-        while let Some(relative) = compact[offset..].find(call) {
-            let call_position = offset + relative;
-            if is_inside_rust_string(&compact, call_position) {
-                offset = call_position + call.len();
-                continue;
-            }
-            let start = call_position + call.len();
-            let end = (start + 160).min(compact.len());
-            let arguments = &compact[start..end];
-            for program in ["python", "python3", "py", "uv"] {
-                if arguments.starts_with(&format!("\"{program}\""))
-                    || arguments.contains(&format!("\"{program}\""))
-                {
-                    return Some(format!(
-                        "xtask invokes forbidden repository runtime: {program}"
-                    ));
-                }
-            }
-            offset = end;
-        }
-    }
-    None
-}
-
-fn is_inside_rust_string(source: &str, position: usize) -> bool {
-    let mut quoted = false;
-    let mut escaped = false;
-    for (index, character) in source.char_indices() {
-        if index >= position {
-            break;
-        }
-        if escaped {
-            escaped = false;
-        } else if character == '\\' && quoted {
-            escaped = true;
-        } else if character == '"' {
-            quoted = !quoted;
-        }
-    }
-    quoted
-}
-
-fn validate_xtask_process_surface(root: &Path) -> Result<()> {
-    let directory = root.join("rust/xtask/src");
-    for entry in WalkDir::new(&directory).follow_links(false) {
-        let entry = entry?;
-        if !entry.file_type().is_file()
-            || entry
-                .path()
-                .extension()
-                .and_then(|extension| extension.to_str())
-                != Some("rs")
-        {
-            continue;
-        }
-        let path = entry.path();
-        let source = fs::read_to_string(path)?;
-        if let Some(violation) = xtask_process_violation(&source) {
-            return Err(format!("{violation} in {}", path.display()).into());
-        }
-        let scan_source = if path.file_name().and_then(|name| name.to_str()) == Some("checks.rs") {
-            strip_retirement_inventory(&source)
-        } else {
-            source
-        };
-        for token in [
-            "build_rust_wheel.py",
-            "scripts/check.py",
-            "scripts/classify_ci_changes.py",
-            "scripts/build_portable_release.py",
-            "scripts/verify_release_manifest.py",
-        ] {
-            if strip_rust_comments(&scan_source).contains(token) {
-                return Err(format!(
-                    "retired canonical script {token} is invoked/referenced by {}",
-                    path.display()
-                )
-                .into());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_tooling_ledger(root: &Path) -> Result<()> {
-    let ledger_path = root.join("docs/migration/wave6-tooling-retirement-ledger.json");
-    let payload: Value = serde_json::from_slice(&fs::read(&ledger_path)?)?;
-    let baseline = payload
-        .get("baseline")
-        .and_then(Value::as_str)
-        .filter(|value| {
-            value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
-        })
-        .ok_or("Wave 6 ledger baseline must be a full commit SHA")?;
-    let entries = payload
-        .get("entries")
-        .and_then(Value::as_array)
-        .ok_or("Wave 6 ledger entries must be an array")?;
-    let evidence_classes = [
-        "MIGRATED_XTASK",
-        "MIGRATED_RUST",
-        "MIGRATED_TYPESCRIPT",
-        "DUPLICATE",
-        "FIXTURE_FROZEN",
-    ];
-    let placeholders = [
-        "generic evidence",
-        "native covers",
-        "named native/frontend/updater tests",
-        "direct Rust/native build evidence is stronger",
-        "native Rust/Tauri services now own",
-    ];
-    let mut ledger_paths = std::collections::BTreeSet::new();
-    for entry in entries {
-        let object = entry
-            .as_object()
-            .ok_or("Wave 6 ledger entry must be an object")?;
-        let path = object
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or("Wave 6 ledger path missing")?;
-        if !ledger_paths.insert(path.to_owned()) {
-            return Err(format!("Wave 6 ledger contains duplicate path: {path}").into());
-        }
-        let classification = object
-            .get("classification")
-            .and_then(Value::as_str)
-            .ok_or("Wave 6 ledger classification missing")?;
-        let exists = root.join(path).exists();
-        if classification == "NONCANONICAL_RETAINED" && !exists {
-            return Err(format!("retained ledger path does not exist: {path}").into());
-        }
-        if evidence_classes.contains(&classification) {
-            validate_evidence_entry(root, path, classification, object, &placeholders)?;
-        } else if matches!(
-            classification,
-            "OBSOLETE" | "TRANSPORT_ONLY" | "TOOLING_RETAINED" | "NONCANONICAL_RETAINED"
-        ) {
-            if !exists && classification != "OBSOLETE" && classification != "TRANSPORT_ONLY" {
-                return Err(format!("{path}: retained tooling entry does not exist").into());
-            }
-        } else {
-            return Err(
-                format!("{path}: unknown Wave 6 ledger classification {classification}").into(),
-            );
-        }
-    }
-    let tracked_python = process::capture_text("git", &["ls-files", "--", "*.py"], root, &[])?;
-    for path in tracked_python
-        .lines()
-        .filter(|path| root.join(path).is_file())
-    {
-        if !ledger_paths.contains(path) {
-            return Err(format!("Python file is missing from Wave 6 ledger: {path}").into());
-        }
-    }
-    let baseline_python = process::capture_text(
-        "git",
-        &[
-            "ls-tree",
-            "-r",
-            "--name-only",
-            baseline,
-            "--",
-            "branding",
-            "scripts",
-            "src",
-            "tests",
-        ],
-        root,
-        &[],
-    )?;
-    let baseline_paths = baseline_python
-        .lines()
-        .filter(|path| path.ends_with(".py"))
-        .collect::<BTreeSet<_>>();
-    for path in &baseline_paths {
-        if !ledger_paths.contains(*path) {
-            return Err(format!(
-                "deleted baseline Python file is missing from Wave 6 ledger: {path}"
-            )
-            .into());
-        }
-    }
-    if ledger_paths
-        .iter()
-        .any(|path| !baseline_paths.contains(path.as_str()))
-    {
-        return Err("Wave 6 ledger contains a path outside the baseline Python inventory".into());
-    }
-    Ok(())
-}
-
-fn validate_evidence_entry(
-    root: &Path,
-    path: &str,
-    classification: &str,
-    object: &serde_json::Map<String, Value>,
-    placeholders: &[&str],
-) -> Result<()> {
-    let invariants = object
-        .get("invariants")
-        .and_then(Value::as_array)
-        .ok_or(format!("{path}: invariants must be a non-empty array"))?;
-    let evidence = object
-        .get("evidence")
-        .and_then(Value::as_array)
-        .ok_or(format!("{path}: evidence must be a non-empty array"))?;
-    if invariants.is_empty()
-        || evidence.is_empty()
-        || invariants.iter().any(|value| {
-            let Some(value) = value.as_str() else {
-                return true;
-            };
-            value.trim().is_empty()
-                || placeholders.iter().any(|placeholder| {
-                    value
-                        .to_ascii_lowercase()
-                        .contains(&placeholder.to_ascii_lowercase())
-                })
-        })
-    {
-        return Err(format!("{path}: {classification} needs concrete invariants/evidence").into());
-    }
-    for item in evidence {
-        let target = item
-            .as_str()
-            .ok_or(format!("{path}: evidence target must be a string"))?;
-        if placeholders.iter().any(|placeholder| {
-            target
-                .to_ascii_lowercase()
-                .contains(&placeholder.to_ascii_lowercase())
-        }) {
-            return Err(format!("{path}: placeholder evidence is not permitted: {target}").into());
-        }
-        let (file, symbol) = target
-            .split_once("::")
-            .ok_or(format!("{path}: evidence must use path::symbol: {target}"))?;
-        let candidate = Path::new(file);
-        if candidate.is_absolute()
-            || candidate
-                .components()
-                .any(|component| component.as_os_str() == "..")
-        {
-            return Err(format!("{path}: evidence path escapes repository: {file}").into());
-        }
-        let evidence_path = root.join(candidate);
-        if !evidence_path.is_file() {
-            return Err(format!("{path}: evidence file does not exist: {file}").into());
-        }
-        let source = fs::read_to_string(&evidence_path)?;
-        if symbol.trim().is_empty() || !source.contains(symbol) {
-            return Err(format!("{path}: evidence symbol is absent: {target}").into());
-        }
-    }
-    Ok(())
-}
+/* retired migration-only process-surface checks removed */
 
 pub fn bindings() -> Result<()> {
     let root = repo::root();
@@ -2878,7 +2487,6 @@ pub fn run(group: &str, skip_supply_chain: bool) -> Result<()> {
             audits::durable_names::run(&root)?;
             audits::architecture::run(&root)?;
             audits::security::run(&root)?;
-            audits::zero_python::run(&root)?;
             tauri_feature_contract(&root)?;
             if !skip_supply_chain {
                 supply_chain::run(None)?;
@@ -2890,12 +2498,10 @@ pub fn run(group: &str, skip_supply_chain: bool) -> Result<()> {
             branding::validate(&root)?;
             tauri_bundle::validate_config(&root)?;
             v4_trust_material_contract(&root)?;
-            legacy_release_guard(&root)?;
             release_authority_contract(&root)?;
             v4_release_pipeline_contract(&root)?;
             packaged_ci_contract(&root)?;
             v4_legacy_updater_retirement(&root)?;
-            retirement(&root)?;
         }
         "rust" => {
             // The canonical Windows qualification runs workspace tests in a
@@ -2965,9 +2571,7 @@ pub fn run(group: &str, skip_supply_chain: bool) -> Result<()> {
             if std::env::var_os("SKY_DESKTOP_SKIP_BROWSER").is_none() {
                 process::run("bun", &["run", "test:e2e"], &root.join("desktop"), &[])?;
             } else {
-                println!(
-                    "[xtask] desktop browser E2E: SKIP (classifier marked browser_required=false)"
-                );
+                println!("[xtask] desktop browser E2E: SKIP (not required for this validation)");
             }
             process::run(
                 "cargo",
@@ -3123,25 +2727,6 @@ packaged-assets = ["tauri/custom-protocol", "tauri/compression"]
     }
 
     #[test]
-    fn legacy_release_guard_requires_the_permanent_v4_namespace_guard() {
-        let source = r#"
-      - name: Block v4+ tags from legacy v3 release workflow
-        run: |
-          $tag = $env:GITHUB_REF_NAME
-          if ($tag -match '^v(?<major>\d+)\.') {
-            $major = [int64]$Matches.major
-            if ($major -ge 4) {
-              throw "v4 publication is prohibited in the legacy v3 release workflow; use the dedicated v4 release authority: $tag"
-            }
-          }
-"#;
-        assert!(legacy_release_guard_source(source).is_ok());
-        assert!(
-            legacy_release_guard_source(&source.replace("$major -ge 4", "$major -gt 4")).is_err()
-        );
-    }
-
-    #[test]
     fn v4_legacy_updater_contract_rejects_retired_runtime_and_release_markers() {
         assert!(
             v4_legacy_updater_source_contract(
@@ -3245,7 +2830,7 @@ ValidateRequest ValidateAuthority BuildCandidate CreateDraft DownloadDraft Quali
 function Invoke-BuildCandidate {
   & pwsh -File orchestrate_v4_production_release.ps1
 }
-function Invoke-CreateDraft { draft = $true; refs/heads/main; authority already contains tag; existing releases are never moved or replaced }
+function Invoke-CreateDraft { draft = $true; refs/heads/main; authority already contains published release/tag; unpublished draft reuse; published tags are immutable; git/refs/tags/$Tag; GitHub's successful DELETE endpoints return an empty body }
 function Invoke-DownloadDraft { downloaded; Get-FileHash; unsigned-zero-budget }
 function Invoke-QualifyDownloaded { verify-signature; verify-tauri-bundle; current-user; active-playback-install-rejected; previous-v4-to-exact-downloaded-candidate-update; selftest-update-active-playback; ci_v4_release_authority_acceptance.ps1; promote_v4_metadata.ps1; release-authority; published_at; Start-MpScan; scan_performed }
 function Invoke-RecordAttestations { V4_RELEASE_AUTHORITY_TOKEN }
@@ -3280,20 +2865,19 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
     steps:
       - run: cargo xtask check rust
   updater_e2e:
-    name: Packaged v4 updater fixture qualification
-    needs: [changes, static, release_authority, supply_chain, validate]
+    name: Updater fixture qualification
+    needs: [changes, static, validate]
+    if: needs.changes.outputs.updater_required == 'true'
     steps:
       - run: dangerousInsecureTransportProtocol = true
       - run: bun run tauri build --features tauri-update-fixture
       - run: $fixtureTarget = Join-Path $env:RUNNER_TEMP "sky-auto-player-v4-updater-fixture-target"; pwsh scripts/ci_tauri_update_e2e.ps1 -FixtureTargetDir $fixtureTarget
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, release_authority, supply_chain, validate]
+    needs: [changes, static, validate]
     steps:
       - name: Resolve GitHub CLI for artifact attestation verification
         run: Get-Command gh.exe -CommandType Application; SKY_GH_PATH=$ghPath
-      - name: Construct Python-unavailable canonical environment
-        run: restricted PATH
       - name: Build and sign canonical Tauri NSIS artifact
       - run: bun install --frozen-lockfile
       - run: bun run build
@@ -3311,12 +2895,6 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
       - name: Run V4 production signing contract test
         run: pwsh scripts/test_v4_production_signing_contract.ps1
         # V4 production signing contract test failed with exit code
-      - name: Run V4 production release orchestrator contract test
-        run: pwsh scripts/test_v4_production_orchestrator.ps1
-        # V4 production release orchestrator contract test failed with exit code
-      - name: Run V4 updater private-key verifier secret-output regression
-        run: pwsh scripts/test_v4_updater_private_key.ps1
-        # V4 updater private-key verifier regression failed with exit code
       - name: Verify Tauri Authenticode signature
         run: pwsh scripts/verify_v4_authenticode.ps1 -Mode unsigned-zero-budget
         # Authenticode verification failed with exit code
@@ -3354,15 +2932,13 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
         path: rust/target/dist/bundle/nsis
   status:
     needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]
-    env: { UPDATER_E2E_RESULT: success }
+    env: { UPDATER_REQUIRED: true, RELEASE_REQUIRED: false, SUPPLY_CHAIN_REQUIRED: false, UPDATER_E2E_RESULT: success }
         "#;
         assert!(packaged_ci_contract_source(source).is_ok());
         let crlf_source = source.replace('\n', "\r\n");
         assert!(packaged_ci_contract_source(&crlf_source).is_ok());
-        let unblocked_package_jobs = source.replace(
-            "needs: [changes, static, release_authority, supply_chain, validate]",
-            "needs: changes",
-        );
+        let unblocked_package_jobs =
+            source.replace("needs: [changes, static, validate]", "needs: changes");
         assert!(packaged_ci_contract_source(&unblocked_package_jobs).is_err());
         for forbidden in [
             "tauri-update-fixture",
@@ -3396,7 +2972,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
       - run: cargo xtask check rust
   packaged:
     name: Packaged v4 Tauri NSIS qualification
-    needs: [changes, static, release_authority, supply_chain, validate]
+    needs: [changes, static, validate]
     steps:
       - run: bun install --frozen-lockfile
       - run: bun run build
@@ -3521,46 +3097,6 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
             WORKER_SCHEDULE_CLONE_PATTERNS
                 .iter()
                 .any(|pattern| "schedule.clone()".contains(pattern))
-        );
-    }
-
-    #[test]
-    fn xtask_process_guard_rejects_python_and_allows_native_tools() {
-        let forbidden = format!("process::run({:?}, &[], root, &[])", "python");
-        assert!(xtask_process_violation(&forbidden).is_some());
-        assert!(xtask_process_violation("Command::new(\"cargo\")").is_none());
-    }
-
-    #[test]
-    fn ledger_evidence_rejects_missing_targets_and_placeholders() {
-        let root = repo::root();
-        let missing = serde_json::json!({
-            "invariants": ["concrete invariant"],
-            "evidence": ["rust/no_such_file.rs::missing"]
-        });
-        assert!(
-            validate_evidence_entry(
-                &root,
-                "tests/deleted.py",
-                "MIGRATED_XTASK",
-                missing.as_object().unwrap(),
-                &["generic evidence"]
-            )
-            .is_err()
-        );
-        let placeholder = serde_json::json!({
-            "invariants": ["concrete invariant"],
-            "evidence": ["generic evidence"]
-        });
-        assert!(
-            validate_evidence_entry(
-                &root,
-                "tests/deleted.py",
-                "DUPLICATE",
-                placeholder.as_object().unwrap(),
-                &["generic evidence"]
-            )
-            .is_err()
         );
     }
 

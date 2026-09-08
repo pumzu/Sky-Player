@@ -55,8 +55,9 @@ Every release candidate is subject to an immutable invariant:
 
 The production v4 updater private key must remain outside the repository/workspace, encrypted at
 rest, with one independent readable encrypted backup. It **must never be stored as plaintext in
-GitHub Actions cloud repository secrets**. The current `unsigned-zero-budget` Authenticode policy
-does not require a production certificate or provider credential.
+GitHub Actions cloud repository secrets**. The current pre-provider `unsigned-zero-budget`
+Authenticode policy is temporary; production GA should use an approved real signer when a provider
+is selected and available, while PR CI remains unsigned-fixture-only.
 
 Conversely, GitHub Artifact Attestations (`actions/attest@v4`) and GitHub-backed SLSA
 provenance rely on GitHub's OIDC minting service, which is accessible only from an active
@@ -78,9 +79,9 @@ GitHub Actions runner environment.
 |            |-- Runs `scripts/orchestrate_v4_production_release.ps1`             |
 |            |     |-- Validates commit and updater key                         |
 |            |     |-- Builds candidate once with canonical public root           |
-|            |     |-- Leaves project PEs unsigned under policy                  |
+|            |     |-- Authenticode-signs project PEs with approved provider at GA|
 |            |     |-- Signs updater package with private key (never logged)      |
-|            |     |-- Qualifies exact bytes (unsigned state + Minisign + SBOM)  |
+|            |     |-- Qualifies exact bytes (Authenticode state + Minisign + SBOM)|
 |            |     \-- Executes mandatory install/launch/uninstall smoke test     |
 |            |-- Runs `actions/attest` with GitHub OIDC token                     |
 |            |     \-- Generates authentic SLSA provenance & SBOM attestation     |
@@ -97,7 +98,7 @@ GitHub Actions runner environment.
 |     |-- Encrypted updater key outside workspace                                |
 |     |-- Runs `scripts/orchestrate_v4_production_release.ps1`                    |
 |     |     |-- Builds candidate from verified clean git commit tag               |
-|     |     |-- Leaves PE unsigned and signs updater payload                       |
+|     |     |-- Authenticode-signs PE and signs updater payload at GA             |
 |     |     |-- Qualifies exact bytes & emits local evidence                      |
 |     |     \-- Executes install/launch/uninstall smoke test                      |
 |     |-- Cryptographic signatures authenticate bytes, BUT do NOT prove which    |
@@ -109,10 +110,11 @@ GitHub Actions runner environment.
 +---------------------------------------------------------------------------------+
 ```
 
-#### Topology A (Accepted Production Path):
+#### Topology A (Current Pre-Provider Path / GA Target):
 A dedicated, single-tenant Windows release runner registered as a GitHub Actions runner for the
-repository. The runner uses the governed `unsigned-zero-budget` Authenticode policy and needs no
-production certificate or provider. It still has access to the updater key only through the
+repository may use the temporary `unsigned-zero-budget` Authenticode policy before GA. The GA
+runner must use the approved production signer without exposing its credentials to PR CI. It still
+has access to the updater key only through the
 external encrypted custody boundary.
 Because it executes within GitHub Actions, `actions/attest@v4` runs directly on the exact
 candidate bytes produced by the orchestrator.
@@ -227,9 +229,10 @@ Before initiating any build or invoking external tools, the orchestrator validat
    *before* building. Key ID is dynamically derived from canonical public root.
 8. **Zero Secret Output**: The orchestrator never prints or leaks the updater key passphrase or key material to
    stdout, stderr, or log streams under any execution or error path.
-9. **Zero-Budget Authenticode Policy**: Production mode is locked to `unsigned-zero-budget`; the
-   signer seam performs no signing and qualification accepts only the actual unsigned state.
-   Test/self-signed and unexpected signed states are rejected.
+9. **Authenticode Policy**: The current pre-provider mode is `unsigned-zero-budget`; the signer
+   seam performs no signing and qualification accepts only the actual unsigned state. At GA, the
+   approved provider must sign before exact-artifact qualification. Test/self-signed and unexpected
+   signed states are rejected.
 10. **Stale Output Purge**: Automatically purges any pre-existing installer candidate, `.sig` file,
     and qualification evidence from the resolved target bundle and evidence directories before packaging.
 
@@ -241,14 +244,15 @@ Step 1: Setup & Pre-Flight Checks
   - Validate parameters, commit SHA, clean worktree, version, channel rules.
   - Purge stale candidate and evidence files from resolved output directories.
   - Verify updater private key matches canonical public root via `cargo xtask updater-trust verify-private-key`.
-  - Configure `SKY_AUTHENTICODE_MODE=unsigned-zero-budget` for signCommand; no provider inputs are required.
+  - Configure the temporary `SKY_AUTHENTICODE_MODE=unsigned-zero-budget` for signCommand until a
+    production provider is selected; no production signing inputs belong in PR CI.
 
 Step 2: Build & Sign Candidate (Single Build)
   - Run `bun install --frozen-lockfile` and `bun run build` in desktop/.
   - Set `TAURI_SIGNING_PRIVATE_KEY` to the validated private key file path (never raw key bytes).
   - Run `bun run tauri build --ci -- --profile dist`.
   - Tauri NSIS bundler invokes `scripts/sign_v4_authenticode.ps1` via signCommand seam.
-  - The seam deliberately performs no Authenticode signing; Tauri signs the updater artifact with
+  - Before provider onboarding, the seam deliberately performs no Authenticode signing; Tauri signs the updater artifact with
     the updater key, generating `.exe.sig`.
   - Assert working tree remains clean post-build (`git status --porcelain`); fail closed and purge
     candidate if any tracked file or manifest was mutated during packaging.
@@ -343,8 +347,10 @@ against the source repository, this workflow, the exact workflow SHA, and the
 candidate subjects. Publication changes only the draft flag. Metadata promotion
 is unreachable until publication returns a non-draft release, and final
 verification re-fetches both public assets and the selected stable/beta
-metadata path. Any failure after draft creation requires a new SemVer/RC; no
-asset, release tag, or published metadata is replaced in place.
+metadata path. An unpublished draft that fails qualification may be deleted
+and recreated with the same version after the candidate is fixed. Published
+assets, release tags, and metadata remain immutable; fixes then require a new
+SemVer/RC.
 
 The authority preflight requires `pumni/Sky-Auto-Player-Releases` to have an
 existing `main` branch. If the authority is empty, the workflow stops and the

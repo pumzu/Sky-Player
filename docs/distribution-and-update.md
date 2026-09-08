@@ -11,11 +11,13 @@ V4 uses the Tauri NSIS package and the Rust-owned `UpdateService` described in
 Releases, portable artifact, or `sky_updater` transaction path. Its fixed
 stable/beta metadata authority and deterministic promotion contract are in
 `v4-release-authority.md`; metadata remains unavailable until a qualified
-promotion. V4 uses an independent public updater trust root and the explicitly
-governed `unsigned-zero-budget` Authenticode policy. The updater private key
+promotion. V4 uses an independent public updater trust root and the temporary
+pre-provider `unsigned-zero-budget` Authenticode policy. The updater private key
 remains outside the repository/workspace, encrypted at rest, with an independent
 readable encrypted backup. No production certificate, provider, or thumbprint is
-required. Windows may show Unknown Publisher or a SmartScreen warning; this is a
+required by PR or ordinary CI. Production GA should use an approved real
+Authenticode signer when a provider is selected and available. Windows may show
+Unknown Publisher or a SmartScreen warning while the temporary policy is active; this is a
 publisher-identity/UX trade-off, not a bypass of Tauri updater cryptographic trust.
 The v4 package contains the NSIS setup executable and its Tauri `.exe.sig`
 sidecar. It does not contain `Sky-Auto-Player-Updater.exe`, a portable ZIP
@@ -27,9 +29,10 @@ V4 update ordering is SemVer-only. Rust owns the fixed stable/beta metadata
 endpoints and channel policy; React cannot provide updater authority, keys,
 URLs, or downgrade policy. The v4 trust root is public-only in source, while
 the private updater key remains external, encrypted at rest with an independent
-encrypted backup. Optional future Authenticode signer inputs remain external;
-no production certificate, provider, or thumbprint is required by the current
-`unsigned-zero-budget` policy.
+encrypted backup. Optional Authenticode signer inputs remain external; no
+production signing credentials belong in PR CI. The current
+`unsigned-zero-budget` state is temporary until an approved production provider
+is available.
 
 Qualification binds the exact NSIS installer and Tauri signature bytes by
 SHA-256 and retains the governed unsigned-zero-budget Authenticode evidence,
@@ -100,8 +103,9 @@ which builds, signs, and attests the exact ZIP, manifest, and signature, then cr
 draft GitHub Release. The draft is the qualification input: it is published
 as a prerelease or stable release only after exact-artifact and platform
 qualification pass. Assets are not replaced and the tag is not moved between
-draft creation and publication; a failed qualification requires a new version
-or RC instead.
+draft creation and publication. A failed unpublished draft may be deleted and
+recreated with the same version after the candidate is fixed; a published or
+promoted release remains immutable and requires a new version.
 
 ### 2. V3 runtime ownership (legacy)
 

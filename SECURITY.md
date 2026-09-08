@@ -61,9 +61,12 @@ audit in its `static` group.
 
 ## Update and release integrity
 
-The v4 release policy is `unsigned-zero-budget`: shipped project PE files and the canonical NSIS
-installer are intentionally unsigned for Authenticode. Windows may show Unknown Publisher or a
-SmartScreen warning; this is a publisher-identity/UX trade-off, not a bypass of update trust.
+The current pre-provider v4 release policy is the temporary `unsigned-zero-budget` state: shipped
+project PE files and the canonical NSIS installer are intentionally unsigned for Authenticode.
+Production GA should use an approved real Authenticode signer when a provider is available; PR CI
+may continue to use unsigned fixtures and must not receive production signing credentials. Windows
+may show Unknown Publisher or a SmartScreen warning while the temporary policy is active; this is a
+publisher-identity/UX trade-off, not a bypass of update trust.
 The Rust-owned `UpdateService` selects the fixed v4 authority and the official Tauri updater
 verifies the detached Ed25519 signature over the exact NSIS update artifact before installation.
 V4 has no bundled custom updater executable, portable ZIP updater contract, or `MANIFEST.json.sig`

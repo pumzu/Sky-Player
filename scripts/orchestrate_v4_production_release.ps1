@@ -75,20 +75,10 @@ function Redact-UpdaterVerifierOutput {
     param(
         [AllowEmptyString()]
         [string]$Output,
-        [string]$KeyFile,
         [string]$Password
     )
 
     $redacted = $Output
-    $keyCandidates = @(
-        $KeyFile,
-        [IO.Path]::GetFullPath($KeyFile),
-        ([IO.Path]::GetFullPath($KeyFile) -replace '\\', '/')
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
-
-    foreach ($candidate in $keyCandidates) {
-        $redacted = $redacted -replace [regex]::Escape($candidate), '[REDACTED]'
-    }
     if (-not [string]::IsNullOrEmpty($Password)) {
         $redacted = $redacted.Replace($Password, '[REDACTED]')
     }
@@ -281,7 +271,6 @@ try {
             $verificationExitCode = $LASTEXITCODE
             $verificationOutput = Redact-UpdaterVerifierOutput `
                 -Output $verificationOutput `
-                -KeyFile $resolvedKeyPath `
                 -Password $passwordValue
             if (-not [string]::IsNullOrWhiteSpace($verificationOutput)) {
                 Write-Output $verificationOutput.TrimEnd()

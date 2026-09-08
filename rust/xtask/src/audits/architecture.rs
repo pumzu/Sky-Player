@@ -5,7 +5,6 @@ use walkdir::WalkDir;
 
 const FORBIDDEN_APP_CORE_DEPENDENCIES: &[&str] = &[
     "tauri",
-    "pyo3",
     "windows-sys",
     "sky_desktop_shell",
     "sky_player",
@@ -37,7 +36,6 @@ fn app_core_boundary(root: &Path) -> Result<()> {
         let clean = crate::checks::strip_rust_comments(&source);
         let tokens = [
             "tauri",
-            "pyo3",
             "windows-sys",
             "windows_sys",
             "sky_desktop_shell",

@@ -3,9 +3,9 @@
 This document defines the Windows Authenticode boundary for the canonical v4 Tauri NSIS package.
 It is governed by `docs/adr/ADR-0006-v4-distribution-installation-update.md` and `SECURITY.md`.
 
-## Project production policy
+## Current pre-provider policy
 
-The project's production policy is `unsigned-zero-budget`.
+The current pre-provider policy is the temporary `unsigned-zero-budget` state.
 
 - `scripts/sign_v4_authenticode.ps1` deliberately performs no signing in this mode.
 - No production certificate, provider, or certificate thumbprint is required.
@@ -14,6 +14,9 @@ The project's production policy is `unsigned-zero-budget`.
 - A test/self-signed binary, a partially signed binary, or any other unexpected status fails closed.
 - Qualification evidence records `authenticode_mode: "unsigned-zero-budget"` and an unsigned state;
   it must never be relabeled `production`.
+- Production GA should change this release boundary to an approved real signer when a provider is
+  selected and available. The intended order is build, Authenticode-sign, independently verify,
+  upload the signed draft, qualify the exact downloaded signed artifact, then publish.
 
 This is a publisher-identity and user-experience trade-off. Windows may show **Unknown Publisher**
 or a SmartScreen warning. It is not a bypass of updater cryptographic trust: the official Tauri
@@ -44,8 +47,8 @@ its successful no-op is followed by explicit unsigned-state verification.
 | `production` | Optional future real-signer seam | Requires an external provider and approved thumbprint; not the project's current release policy |
 
 The optional `production` branch remains available for a future, separately approved signer. It is
-not invoked by the canonical project release path and does not justify provider onboarding or paid
-service assumptions. In particular, the current release orchestrator sets
+not invoked by the canonical project release path until provider onboarding is complete. In
+particular, the current release orchestrator sets
 `SKY_AUTHENTICODE_MODE=unsigned-zero-budget` and does not require provider inputs.
 
 ## Verification contract
