@@ -5,8 +5,7 @@ use std::fs;
 use std::path::Path;
 use url::Url;
 
-pub const AUTHORITY_REPOSITORY: &str = "pumni/Sky-Auto-Player-Releases";
-pub const SOURCE_REPOSITORY: &str = "pumni/Sky-Auto-Player";
+pub const RELEASE_REPOSITORY: &str = "pumni/Sky-Auto-Player";
 pub const STABLE_METADATA_PATH: &str = "channels/stable/latest.json";
 pub const BETA_METADATA_PATH: &str = "channels/beta/latest.json";
 pub const WINDOWS_PLATFORM: &str = "windows-x86_64";
@@ -68,14 +67,14 @@ pub fn canonical_installer_name(version: &str) -> String {
     format!("{PRODUCT_NAME}_{version}_{WINDOWS_ARCH}-setup.exe")
 }
 
-pub fn canonical_authority_installer_name(version: &str) -> String {
+pub fn canonical_release_installer_name(version: &str) -> String {
     canonical_installer_name(version).replace(' ', ".")
 }
 
 pub fn canonical_asset_url(version: &str) -> String {
     format!(
-        "https://github.com/{AUTHORITY_REPOSITORY}/releases/download/v{version}/{}",
-        canonical_authority_installer_name(version)
+        "https://github.com/{RELEASE_REPOSITORY}/releases/download/v{version}/{}",
+        canonical_release_installer_name(version)
     )
 }
 
@@ -191,12 +190,9 @@ fn validate_metadata(metadata: &TauriMetadata, channel: Channel) -> Result<()> {
         return Err("Tauri updater signature must be non-empty base64 text".into());
     }
     let expected_asset_url = canonical_asset_url(&metadata.version);
-    if platform.url.contains(&format!("/{SOURCE_REPOSITORY}/")) {
-        return Err("v4 metadata must not point at the v3 source repository".into());
-    }
     if platform.url != expected_asset_url {
         return Err(format!(
-            "asset URL must be the exact immutable authority URL {expected_asset_url}"
+            "asset URL must be the exact immutable repository URL {expected_asset_url}"
         )
         .into());
     }
@@ -209,7 +205,7 @@ fn validate_metadata(metadata: &TauriMetadata, channel: Channel) -> Result<()> {
         || parsed_url.fragment().is_some()
     {
         return Err(
-            "asset URL must be an HTTPS GitHub authority URL without credentials or query state"
+            "asset URL must be an HTTPS GitHub release URL without credentials or query state"
                 .into(),
         );
     }
@@ -316,7 +312,7 @@ mod tests {
         let url = canonical_asset_url("4.0.0-beta.1");
         assert_eq!(
             url,
-            "https://github.com/pumni/Sky-Auto-Player-Releases/releases/download/v4.0.0-beta.1/Sky.Auto.Player_4.0.0-beta.1_x64-setup.exe"
+            "https://github.com/pumni/Sky-Auto-Player/releases/download/v4.0.0-beta.1/Sky.Auto.Player_4.0.0-beta.1_x64-setup.exe"
         );
         let first = serde_json::to_string_pretty(&metadata("4.0.0-beta.1", &url)).unwrap();
         let second = serde_json::to_string_pretty(&metadata("4.0.0-beta.1", &url)).unwrap();
@@ -326,7 +322,7 @@ mod tests {
     #[test]
     fn generator_normalises_inputs_and_emits_valid_static_metadata() {
         let root =
-            std::env::temp_dir().join(format!("sky-v4-release-authority-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sky-v4-release-metadata-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let notes = root.join("notes.md");
@@ -364,11 +360,11 @@ mod tests {
     }
 
     #[test]
-    fn validator_rejects_source_repo_and_noncanonical_assets() {
+    fn validator_rejects_noncanonical_assets() {
         let valid = canonical_asset_url("4.0.0");
         assert!(validate_metadata(&metadata("4.0.0", &valid), Channel::Stable).is_ok());
         for url in [
-            valid.replace(AUTHORITY_REPOSITORY, SOURCE_REPOSITORY),
+            valid.replace(RELEASE_REPOSITORY, "pumni/Other-Repository"),
             valid.replace("https://", "http://"),
             valid.replace("_x64-setup.exe", "_x64-setup.exe?channel=beta"),
             valid.replace("Sky.Auto.Player", "Sky-Auto-Player-v4"),

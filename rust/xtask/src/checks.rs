@@ -215,16 +215,12 @@ fn release_authority_contract(root: &Path) -> Result<()> {
     let native_path = root.join("desktop/src-tauri/src/native_update.rs");
     let native = fs::read_to_string(&native_path)?;
     for marker in [
-        "V4_RELEASE_AUTHORITY_REPOSITORY",
         "V4_STABLE_METADATA_ENDPOINT",
         "V4_BETA_METADATA_ENDPOINT",
-        "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/stable/latest.json",
-        "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/beta/latest.json",
         "endpoints(vec![endpoint])",
         "V4_TAURI_UPDATER_PUBLIC_KEY",
         "V4_TAURI_UPDATER_PUBLIC_KEYS",
         ".pubkey(public_key)",
-        "production_authority_is_fixed_and_channel_isolated",
     ] {
         if !native.contains(marker) {
             return Err(format!(
@@ -250,7 +246,7 @@ fn release_authority_contract(root: &Path) -> Result<()> {
     let generator_path = root.join("rust/xtask/src/release_authority.rs");
     let generator = fs::read_to_string(&generator_path)?;
     for marker in [
-        "AUTHORITY_REPOSITORY: &str = \"pumni/Sky-Auto-Player-Releases\"",
+        "RELEASE_REPOSITORY: &str = \"pumni/Sky-Auto-Player\"",
         "STABLE_METADATA_PATH: &str = \"channels/stable/latest.json\"",
         "BETA_METADATA_PATH: &str = \"channels/beta/latest.json\"",
         "WINDOWS_PLATFORM: &str = \"windows-x86_64\"",
@@ -269,7 +265,7 @@ fn release_authority_contract(root: &Path) -> Result<()> {
         }
     }
     for forbidden in [
-        "pumni/Sky-Auto-Player/releases",
+        "pumni/Sky-Auto-Player-Releases/releases",
         "example.invalid",
         "dangerousInsecureTransportProtocol",
     ] {
@@ -297,13 +293,13 @@ fn release_authority_contract(root: &Path) -> Result<()> {
         }
     }
 
-    let acceptance_path = root.join("scripts/ci_v4_release_authority_acceptance.ps1");
+    let acceptance_path = root.join("scripts/ci_v4_release_latest_guard.ps1");
     let acceptance = fs::read_to_string(&acceptance_path)?;
     for marker in [
-        "This is deliberately read-only",
-        "$sourceRepository = \"pumni/Sky-Auto-Player\"",
-        "$authorityRepository = \"pumni/Sky-Auto-Player-Releases\"",
+        "legacy Latest guard",
+        "$canonicalRepository = \"pumni/Sky-Auto-Player\"",
         "releases/latest",
+        "make_latest=false",
         "read_only=true",
     ] {
         if !acceptance.contains(marker) {
@@ -333,7 +329,7 @@ fn release_authority_contract(root: &Path) -> Result<()> {
         "$productionAuthenticodeMode = \"unsigned-zero-budget\"",
         "governed unsigned-zero-budget Authenticode evidence",
         "[ValidateSet(\"stable\", \"beta\")]",
-        "$authorityRepository = \"pumni/Sky-Auto-Player-Releases\"",
+        "$canonicalRepository = \"pumni/Sky-Auto-Player\"",
         "$QualificationEvidence",
         "release-authority validate --channel $Channel",
         "releases/tags/v$version",
@@ -371,9 +367,9 @@ fn release_authority_contract(root: &Path) -> Result<()> {
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path)?;
     for marker in [
-        "release_authority:",
-        "name: V4 release authority acceptance",
-        "scripts/ci_v4_release_authority_acceptance.ps1",
+        "release_contract:",
+        "name: V4 release contract acceptance",
+        "scripts/ci_v4_release_latest_guard.ps1",
         "scripts/promote_v4_metadata.ps1 -SelfTest",
         "Run V4 production release orchestrator contract test",
         "scripts/test_v4_production_orchestrator.ps1",
@@ -384,7 +380,7 @@ fn release_authority_contract(root: &Path) -> Result<()> {
         "V4_QUALIFICATION_EVIDENCE.json",
         "RELEASE_REQUIRED",
         "SUPPLY_CHAIN_REQUIRED",
-        "needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]",
+        "needs: [changes, static, release_contract, supply_chain, validate, updater_e2e, packaged]",
     ] {
         if !ci.contains(marker) {
             return Err(
@@ -409,7 +405,8 @@ fn v4_release_pipeline_contract_source(
         "contents: read",
         "id-token: write",
         "attestations: write",
-        "V4_RELEASE_AUTHORITY_TOKEN",
+        "contents: write",
+        "GH_TOKEN: ${{ github.token }}",
         "ref: ${{ inputs.source_sha }}",
         "Verify runner-local updater key configuration",
         "V4_UPDATER_PRIVATE_KEY_PATH",
@@ -432,7 +429,7 @@ fn v4_release_pipeline_contract_source(
     }
     let workflow_states = [
         "-State ValidateRequest",
-        "-State ValidateAuthority",
+        "-State ValidateRepository",
         "-State BuildCandidate",
         "-State CreateDraft",
         "-State DownloadDraft",
@@ -476,10 +473,9 @@ fn v4_release_pipeline_contract_source(
             );
         }
     }
-    if workflow.matches("GH_TOKEN: ${{ github.token }}").count() != 1 {
+    if workflow.matches("GH_TOKEN: ${{ github.token }}").count() < 1 {
         return Err(
-            "source GITHUB_TOKEN must be confined to the exact attestation verification step"
-                .into(),
+            "repository GITHUB_TOKEN must be present on every GitHub-mutating/read step".into(),
         );
     }
 
@@ -492,7 +488,7 @@ fn v4_release_pipeline_contract_source(
     }
     for marker in [
         "ValidateRequest",
-        "ValidateAuthority",
+        "ValidateRepository",
         "BuildCandidate",
         "CreateDraft",
         "DownloadDraft",
@@ -502,9 +498,9 @@ fn v4_release_pipeline_contract_source(
         "PromoteMetadata",
         "FinalVerify",
         "unsigned-zero-budget",
-        "authority main is not initialized",
+        "canonical repository main is not initialized",
         "refs/heads/main",
-        "authority already contains published release/tag",
+        "repository already contains published release/tag",
         "unpublished draft reuse",
         "published tags are immutable",
         "git/refs/tags/$Tag",
@@ -514,13 +510,18 @@ fn v4_release_pipeline_contract_source(
         "verify-tauri-bundle",
         "current-user",
         "active-playback-install-rejected",
-        "ci_v4_release_authority_acceptance.ps1",
+        "ci_v4_release_latest_guard.ps1",
         "promote_v4_metadata.ps1",
         "release-authority",
         "published_at",
         "draft = $true",
         "draft = $false",
-        "V4_RELEASE_AUTHORITY_TOKEN",
+        "make_latest = $false",
+        "target_commitish = $SourceSha.ToLowerInvariant()",
+        "branch = \"release-metadata\"",
+        "GITHUB_REPOSITORY",
+        "Invoke-GitHubApi",
+        "v4_release_asset_upload.ps1",
         "upload_url",
         "immutable-releases",
         "Assert-ImmutableRelease",
@@ -628,30 +629,9 @@ fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
             );
         }
     }
-    let rehearsal_path = root.join("scripts/test_v4_release_authority_rehearsal.ps1");
-    let rehearsal = fs::read_to_string(&rehearsal_path)?;
-    let upload_helper_path = root.join("scripts/v4_release_authority_upload.ps1");
+    let upload_helper_path = root.join("scripts/v4_release_asset_upload.ps1");
     let upload_helper = fs::read_to_string(&upload_helper_path)?;
-    for marker in [
-        "ConfirmDisposable",
-        "V4_RELEASE_AUTHORITY_TOKEN",
-        "immutable-releases",
-        "upload_url",
-        "draft and tag deleted",
-        "--method",
-        "DELETE",
-    ] {
-        if !rehearsal.contains(marker) {
-            return Err(format!(
-                "v4 authority rehearsal is missing its bounded cleanup marker: {marker}"
-            )
-            .into());
-        }
-    }
-    for (name, source) in [
-        ("production release pipeline", pipeline.as_str()),
-        ("authority rehearsal", rehearsal.as_str()),
-    ] {
+    for (name, source) in [("production release pipeline", pipeline.as_str())] {
         for forbidden in [
             "gh @Arguments --output",
             "gh.exe @Arguments --output",
@@ -667,7 +647,7 @@ fn v4_release_pipeline_contract(root: &Path) -> Result<()> {
         }
         for marker in [
             "Invoke-GhBinaryOutput",
-            "Invoke-V4ReleaseAuthorityAssetUpload",
+            "Invoke-V4ReleaseAssetUpload",
             "PSVersionTable.PSVersion",
             "7.4.0",
             "RedirectStandardOutput",
@@ -934,7 +914,7 @@ fn packaged_ci_contract_source(source: &str) -> Result<()> {
     }
 
     for marker in [
-        "needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]",
+        "needs: [changes, static, release_contract, supply_chain, validate, updater_e2e, packaged]",
         "UPDATER_REQUIRED",
         "RELEASE_REQUIRED",
         "SUPPLY_CHAIN_REQUIRED",
@@ -2759,33 +2739,33 @@ packaged-assets = ["tauri/custom-protocol", "tauri/compression"]
     #[test]
     fn release_authority_contract_requires_rust_owned_channels_and_read_only_acceptance() {
         let native = r#"
-const V4_RELEASE_AUTHORITY_REPOSITORY: &str = "pumni/Sky-Auto-Player-Releases";
-const V4_STABLE_METADATA_ENDPOINT: &str = "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/stable/latest.json";
-const V4_BETA_METADATA_ENDPOINT: &str = "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/beta/latest.json";
+const V4_STABLE_METADATA_ENDPOINT: &str = "https://raw.githubusercontent.com/pumni/Sky-Auto-Player/release-metadata/channels/stable/latest.json";
+const V4_BETA_METADATA_ENDPOINT: &str = "https://raw.githubusercontent.com/pumni/Sky-Auto-Player/release-metadata/channels/beta/latest.json";
+fn validate_official_metadata_endpoint() {}
 endpoints(vec![endpoint])
-fn production_authority_is_fixed_and_channel_isolated() {}
+fn production_metadata_endpoints_are_fixed_and_channel_isolated() {}
 "#;
         for marker in [
-            "V4_RELEASE_AUTHORITY_REPOSITORY",
             "V4_STABLE_METADATA_ENDPOINT",
             "V4_BETA_METADATA_ENDPOINT",
-            "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/stable/latest.json",
-            "https://raw.githubusercontent.com/pumni/Sky-Auto-Player-Releases/main/channels/beta/latest.json",
+            "https://raw.githubusercontent.com/pumni/Sky-Auto-Player/release-metadata/channels/stable/latest.json",
+            "https://raw.githubusercontent.com/pumni/Sky-Auto-Player/release-metadata/channels/beta/latest.json",
             "endpoints(vec![endpoint])",
-            "production_authority_is_fixed_and_channel_isolated",
+            "validate_official_metadata_endpoint",
+            "production_metadata_endpoints_are_fixed_and_channel_isolated",
         ] {
             assert!(native.contains(marker), "{marker}");
         }
         assert!(!native.contains("api.github.com/repos/pumni/Sky-Auto-Player/releases"));
 
         let acceptance = r#"
-# This is deliberately read-only.
-$sourceRepository = "pumni/Sky-Auto-Player"
-$authorityRepository = "pumni/Sky-Auto-Player-Releases"
+# This is the read-only legacy Latest guard.
+$canonicalRepository = "pumni/Sky-Auto-Player"
 releases/latest
+make_latest=false
 read_only=true
 "#;
-        assert!(acceptance.contains("This is deliberately read-only"));
+        assert!(acceptance.contains("legacy Latest guard"));
         assert!(acceptance.contains("releases/latest"));
         assert!(!acceptance.contains("gh release create"));
     }
@@ -2798,19 +2778,21 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 jobs:
   release:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     runs-on: [self-hosted, windows, v4-release, single-tenant]
     ref: ${{ inputs.source_sha }}
     Verify runner-local updater key configuration
     V4_UPDATER_PRIVATE_KEY_PATH
     -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
     persist-credentials: false
-    env: V4_RELEASE_AUTHORITY_TOKEN
+    GH_TOKEN: ${{ github.token }}
     -State ValidateRequest
-    -State ValidateAuthority
+    -State ValidateRepository
     -State BuildCandidate
     -State CreateDraft
     -State DownloadDraft
@@ -2826,16 +2808,16 @@ jobs:
     GH_TOKEN: ${{ github.token }}
 "#;
         let pipeline = r#"
-ValidateRequest ValidateAuthority BuildCandidate CreateDraft DownloadDraft QualifyDownloaded RecordAttestations PublishDraft PromoteMetadata FinalVerify authority main is not initialized upload_url immutable-releases Assert-ImmutableRelease scripts/ci_tauri_update_e2e.ps1 CandidateInstallerPath CandidateSignaturePath CandidatePublicKeyPath export-public-key Start-MpScan scan_performed selftest-update-active-playback scan_v4_defender_exact.ps1 v4_updater_credential_broker.ps1
+ValidateRequest ValidateRepository BuildCandidate CreateDraft DownloadDraft QualifyDownloaded RecordAttestations PublishDraft PromoteMetadata FinalVerify canonical repository main is not initialized upload_url immutable-releases Assert-ImmutableRelease scripts/ci_tauri_update_e2e.ps1 CandidateInstallerPath CandidateSignaturePath CandidatePublicKeyPath export-public-key Start-MpScan scan_performed selftest-update-active-playback scan_v4_defender_exact.ps1 v4_updater_credential_broker.ps1 make_latest = $false target_commitish = $SourceSha.ToLowerInvariant() branch = "release-metadata" GITHUB_REPOSITORY Invoke-GitHubApi v4_release_asset_upload.ps1
 function Invoke-BuildCandidate {
   & pwsh -File orchestrate_v4_production_release.ps1
 }
-function Invoke-CreateDraft { draft = $true; refs/heads/main; authority already contains published release/tag; unpublished draft reuse; published tags are immutable; git/refs/tags/$Tag; GitHub's successful DELETE endpoints return an empty body }
+function Invoke-CreateDraft { draft = $true; refs/heads/main; repository already contains published release/tag; unpublished draft reuse; published tags are immutable; git/refs/tags/$Tag; make_latest = $false; GitHub's successful DELETE endpoints return an empty body }
 function Invoke-DownloadDraft { downloaded; Get-FileHash; unsigned-zero-budget }
-function Invoke-QualifyDownloaded { verify-signature; verify-tauri-bundle; current-user; active-playback-install-rejected; previous-v4-to-exact-downloaded-candidate-update; selftest-update-active-playback; ci_v4_release_authority_acceptance.ps1; promote_v4_metadata.ps1; release-authority; published_at; Start-MpScan; scan_performed }
-function Invoke-RecordAttestations { V4_RELEASE_AUTHORITY_TOKEN }
-function Invoke-PublishDraft { draft = $false }
-function Invoke-PromoteMetadata { metadata promotion is forbidden before immutable publication }
+function Invoke-QualifyDownloaded { verify-signature; verify-tauri-bundle; current-user; active-playback-install-rejected; previous-v4-to-exact-downloaded-candidate-update; selftest-update-active-playback; ci_v4_release_latest_guard.ps1; promote_v4_metadata.ps1; release-authority; published_at; Start-MpScan; scan_performed }
+function Invoke-RecordAttestations { GH_TOKEN }
+function Invoke-PublishDraft { draft = $false; make_latest = $false }
+function Invoke-PromoteMetadata { metadata promotion is forbidden before immutable publication; branch = "release-metadata"; GITHUB_REPOSITORY; Invoke-GitHubApi }
 function Invoke-FinalVerify { FinalVerify }
 "#;
         let regression = r#"
@@ -2931,7 +2913,7 @@ class MockReleaseApi { [int]$BuildCount = 0; [string]$UploadUrl = ''; [bool]$Upl
         uses: actions/upload-artifact@v7
         path: rust/target/dist/bundle/nsis
   status:
-    needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]
+    needs: [changes, static, release_contract, supply_chain, validate, updater_e2e, packaged]
     env: { UPDATER_REQUIRED: true, RELEASE_REQUIRED: false, SUPPLY_CHAIN_REQUIRED: false, UPDATER_E2E_RESULT: success }
         "#;
         assert!(packaged_ci_contract_source(source).is_ok());
