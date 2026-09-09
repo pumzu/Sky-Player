@@ -113,10 +113,10 @@ try {
         } else {
             [string]$record.name
         }
-        $authorityName = if ($null -ne $record.PSObject.Properties["authority_name"]) {
-            [string]$record.authority_name
+        $releaseName = if ($null -ne $record.PSObject.Properties["release_name"]) {
+            [string]$record.release_name
         } else {
-            Get-V4SafeAuthorityAssetName $sourceName
+            Get-V4SafeReleaseAssetName $sourceName
         }
         $sourcePath = Get-SourceAssetPath $record
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
@@ -128,7 +128,7 @@ try {
             $sourceHash -ne [string]$record.sha256) {
             Fail "candidate asset changed after BuildCandidate: $sourceName"
         }
-        $destination = Join-Path $downloaded $authorityName
+        $destination = Join-Path $downloaded $releaseName
         Copy-Item -LiteralPath $sourcePath -Destination $destination -Force
         $downloadedItem = Get-Item -LiteralPath $destination
         $downloadedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()

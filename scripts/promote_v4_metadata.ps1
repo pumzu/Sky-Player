@@ -10,7 +10,7 @@ param(
     [string]$QualificationEvidence,
 
     [Parameter(Mandatory = $true, ParameterSetName = "Promotion")]
-    [string]$AuthorityCheckout,
+    [string]$MetadataCheckout,
 
     [Parameter(ParameterSetName = "Promotion")]
     [string]$SourceCheckout = (Split-Path -Parent $PSScriptRoot),
@@ -23,7 +23,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$authorityRepository = "pumni/Sky-Auto-Player-Releases"
+$canonicalRepository = "pumni/Sky-Auto-Player"
 $platform = "windows-x86_64"
 $productName = "Sky Auto Player"
 $productIdentifier = "io.github.pumni.skyautoplayer"
@@ -32,6 +32,16 @@ $evidenceType = "tauri-nsis-qualified-release"
 $evidenceSchemaVersion = 1
 $productionAuthenticodeMode = "unsigned-zero-budget"
 . (Join-Path $PSScriptRoot "v4_qualification_evidence.ps1")
+
+function Get-CanonicalRepository {
+    if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+        throw "GITHUB_REPOSITORY is required for release metadata promotion"
+    }
+    if ($env:GITHUB_REPOSITORY -ne $canonicalRepository) {
+        throw "release metadata promotion is permitted only for $canonicalRepository"
+    }
+    return $env:GITHUB_REPOSITORY
+}
 
 function Get-GitHubJson([string]$Path) {
     $payload = & gh api $Path --header "Accept: application/vnd.github+json"
@@ -138,7 +148,7 @@ function Assert-QualificationEvidence(
 }
 
 function Get-CanonicalReleaseAssetUrl([string]$Version, [string]$Name) {
-    return "https://github.com/$authorityRepository/releases/download/v$Version/$([Uri]::EscapeDataString($Name))"
+    return "https://github.com/$canonicalRepository/releases/download/v$Version/$([Uri]::EscapeDataString($Name))"
 }
 
 function Get-PublishedAssetSha256([object]$Asset, [string]$ExpectedUrl, [string]$Kind) {
@@ -196,9 +206,9 @@ function Invoke-PromotionSelfTest {
     $version = "4.0.0"
     $installer = "$productName`_$version$installerNameSuffix"
     $signature = "$installer.sig"
-    $authorityInstaller = Get-V4SafeAuthorityAssetName $installer
-    $authoritySignature = Get-V4SafeAuthorityAssetName $signature
-    $url = Get-CanonicalReleaseAssetUrl $version $authorityInstaller
+    $releaseInstaller = Get-V4SafeReleaseAssetName $installer
+    $releaseSignature = Get-V4SafeReleaseAssetName $signature
+    $url = Get-CanonicalReleaseAssetUrl $version $releaseInstaller
     $evidence = [pscustomobject]@{
         schema_version = 1
         evidence_type = $evidenceType
@@ -223,14 +233,14 @@ function Invoke-PromotionSelfTest {
     }
     $digests = Assert-QualificationEvidence $evidence $version $installer $signature
     $differentBytes = [pscustomobject]@{
-        name = $authorityInstaller
+        name = $releaseInstaller
         browser_download_url = $url
         size = [int64]10
         digest = "sha256:" + ("b" * 64)
     }
     $rejected = $false
     try {
-        Assert-PublishedAsset $differentBytes $authorityInstaller $url $digests.InstallerSize $digests.InstallerSha256 "installer"
+        Assert-PublishedAsset $differentBytes $releaseInstaller $url $digests.InstallerSize $digests.InstallerSha256 "installer"
     } catch {
         if ($_.Exception.Message -notmatch "SHA-256 mismatch") { throw }
         $rejected = $true
@@ -271,9 +281,11 @@ if (-not (Test-Path -LiteralPath $Metadata -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $QualificationEvidence -PathType Leaf)) {
     throw "Qualification evidence does not exist: $QualificationEvidence"
 }
-if (-not (Test-Path -LiteralPath $AuthorityCheckout -PathType Container)) {
-    throw "Authority checkout does not exist: $AuthorityCheckout"
+if (-not (Test-Path -LiteralPath $MetadataCheckout -PathType Container)) {
+    throw "release-metadata checkout does not exist: $MetadataCheckout"
 }
+
+$repository = Get-CanonicalRepository
 
 $metadataJson = Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
 $platformJson = $metadataJson.platforms.$platform
@@ -281,8 +293,8 @@ if ($null -eq $platformJson) { throw "Metadata has no $platform entry" }
 $version = [string]$metadataJson.version
 $expectedInstaller = "$productName`_$version$installerNameSuffix"
 $expectedSignature = "$expectedInstaller.sig"
-$expectedAuthorityInstaller = Get-V4SafeAuthorityAssetName $expectedInstaller
-$expectedAuthoritySignature = Get-V4SafeAuthorityAssetName $expectedSignature
+$expectedReleaseInstaller = Get-V4SafeReleaseAssetName $expectedInstaller
+$expectedReleaseSignature = Get-V4SafeReleaseAssetName $expectedSignature
 $evidence = Get-Content -LiteralPath $QualificationEvidence -Raw | ConvertFrom-Json
 $evidenceDigests = $null
 
@@ -294,7 +306,7 @@ if ($LASTEXITCODE -ne 0) { throw "v4 metadata structural validation failed" }
 
 $evidenceDigests = Assert-QualificationEvidence $evidence $version $expectedInstaller $expectedSignature
 
-$release = Get-GitHubJson "repos/$authorityRepository/releases/tags/v$version"
+$release = Get-GitHubJson "repos/$repository/releases/tags/v$version"
 if ($release.draft -or [string]::IsNullOrWhiteSpace([string]$release.published_at)) {
     throw "Cannot promote metadata before the v4 release is published: v$version"
 }
@@ -302,19 +314,19 @@ if ($Channel -eq "stable" -and $release.prerelease) {
     throw "Stable metadata cannot point at a prerelease: v$version"
 }
 
-$asset = @($release.assets | Where-Object { $_.name -eq $expectedAuthorityInstaller })
-$signatureAsset = @($release.assets | Where-Object { $_.name -eq $expectedAuthoritySignature })
+$asset = @($release.assets | Where-Object { $_.name -eq $expectedReleaseInstaller })
+$signatureAsset = @($release.assets | Where-Object { $_.name -eq $expectedReleaseSignature })
 if ($asset.Count -ne 1 -or $signatureAsset.Count -ne 1) {
     throw "Published release is missing the exact Tauri installer/signature pair"
 }
-$expectedInstallerUrl = Get-CanonicalReleaseAssetUrl $version $expectedAuthorityInstaller
-$expectedSignatureUrl = Get-CanonicalReleaseAssetUrl $version $expectedAuthoritySignature
+$expectedInstallerUrl = Get-CanonicalReleaseAssetUrl $version $expectedReleaseInstaller
+$expectedSignatureUrl = Get-CanonicalReleaseAssetUrl $version $expectedReleaseSignature
 if ([string]$platformJson.url -ne $expectedInstallerUrl) {
     throw "Metadata URL is not the exact published Tauri asset URL"
 }
-Assert-PublishedAsset $asset[0] $expectedAuthorityInstaller $expectedInstallerUrl `
+Assert-PublishedAsset $asset[0] $expectedReleaseInstaller $expectedInstallerUrl `
     $evidenceDigests.InstallerSize $evidenceDigests.InstallerSha256 "installer"
-Assert-PublishedAsset $signatureAsset[0] $expectedAuthoritySignature $expectedSignatureUrl `
+Assert-PublishedAsset $signatureAsset[0] $expectedReleaseSignature $expectedSignatureUrl `
     $evidenceDigests.SignatureSize $evidenceDigests.SignatureSha256 "signature"
 
 $publishedSignature = & gh api $signatureAsset[0].url --header "Accept: application/octet-stream"
@@ -323,7 +335,7 @@ if (($publishedSignature -join "`n").Trim() -ne ([string]$platformJson.signature
     throw "Metadata signature does not match the exact published .sig contents"
 }
 
-$checkoutRoot = (Resolve-Path -LiteralPath $AuthorityCheckout).Path
+$checkoutRoot = (Resolve-Path -LiteralPath $MetadataCheckout).Path
 $destination = Join-Path $checkoutRoot "channels\$Channel\latest.json"
 $destinationParent = Split-Path -Parent $destination
 New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
@@ -335,5 +347,5 @@ try {
     Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Promoted validated v4 $Channel metadata for v$version to $destination"
-Write-Host "The authority checkout must be reviewed and committed separately; this action never publishes or mutates a GitHub release."
+Write-Host "Prepared validated v4 $Channel metadata for v$version to $destination"
+Write-Host "The release-metadata branch is published separately after validation; this action never publishes or mutates a GitHub release."

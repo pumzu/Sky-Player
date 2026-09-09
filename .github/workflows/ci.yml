@@ -164,8 +164,8 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  release_authority:
-    name: V4 release authority acceptance
+  release_contract:
+    name: V4 release contract acceptance
     needs: changes
     if: needs.changes.outputs.release_required == 'true'
     runs-on: windows-latest
@@ -177,7 +177,7 @@ jobs:
         shell: bash
     steps:
       - name: Start CI timing
-        run: echo "SKY_CI_JOB_STARTED_RELEASE_AUTHORITY=$(date +%s)" >> "$GITHUB_ENV"
+        run: echo "SKY_CI_JOB_STARTED_RELEASE_CONTRACT=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,10 +202,10 @@ jobs:
         working-directory: desktop
         run: bun install --frozen-lockfile
 
-      - name: Read-only v3 namespace and dedicated v4 authority acceptance
+      - name: Read-only legacy GitHub Latest guard
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pwsh scripts/ci_v4_release_authority_acceptance.ps1
+        run: pwsh scripts/ci_v4_release_latest_guard.ps1
 
       - name: Promotion digest regression self-test
         run: pwsh scripts/promote_v4_metadata.ps1 -SelfTest
@@ -222,12 +222,12 @@ jobs:
       - name: Report CI timing
         if: always()
         run: |
-          start_time="${SKY_CI_JOB_STARTED_RELEASE_AUTHORITY:-}"
+          start_time="${SKY_CI_JOB_STARTED_RELEASE_CONTRACT:-}"
           if [ -n "$start_time" ]; then
             elapsed=$(( $(date +%s) - start_time ))
             {
               echo "## CI job timing"
-              echo "- Job: \`release-authority\`"
+              echo "- Job: \`release-contract\`"
               echo "- Elapsed seconds: \`$elapsed\`"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -874,7 +874,7 @@ jobs:
   status:
     name: Sky Auto Player — required CI gate
     if: always()
-    needs: [changes, static, release_authority, supply_chain, validate, updater_e2e, packaged]
+    needs: [changes, static, release_contract, supply_chain, validate, updater_e2e, packaged]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -894,7 +894,7 @@ jobs:
           RELEASE_REQUIRED: ${{ needs.changes.outputs.release_required }}
           SUPPLY_CHAIN_REQUIRED: ${{ needs.changes.outputs.supply_chain_required }}
           STATIC_RESULT: ${{ needs.static.result }}
-          RELEASE_AUTHORITY_RESULT: ${{ needs.release_authority.result }}
+          RELEASE_CONTRACT_RESULT: ${{ needs.release_contract.result }}
           SUPPLY_CHAIN_RESULT: ${{ needs.supply_chain.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           UPDATER_E2E_RESULT: ${{ needs.updater_e2e.result }}
@@ -908,9 +908,9 @@ jobs:
             [[ "$STATIC_RESULT" == "skipped" ]]
           fi
           if [[ "$RELEASE_REQUIRED" == "true" ]]; then
-            [[ "$RELEASE_AUTHORITY_RESULT" == "success" ]]
+            [[ "$RELEASE_CONTRACT_RESULT" == "success" ]]
           else
-            [[ "$RELEASE_AUTHORITY_RESULT" == "skipped" ]]
+            [[ "$RELEASE_CONTRACT_RESULT" == "skipped" ]]
           fi
           if [[ "$SUPPLY_CHAIN_REQUIRED" == "true" ]]; then
             [[ "$SUPPLY_CHAIN_RESULT" == "success" ]]

@@ -6,15 +6,13 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pipelinePath = Join-Path $PSScriptRoot "v4_release_pipeline.ps1"
-$rehearsalPath = Join-Path $PSScriptRoot "test_v4_release_authority_rehearsal.ps1"
 $topologyRehearsalPath = Join-Path $PSScriptRoot "test_v4_production_topology_rehearsal.ps1"
 $fixtureWrapperPath = Join-Path $PSScriptRoot "ci_tauri_update_e2e.ps1"
 $fixtureCorePath = Join-Path $PSScriptRoot "ci_tauri_update_e2e_core.ps1"
-$uploadHelperPath = Join-Path $PSScriptRoot "v4_release_authority_upload.ps1"
+$uploadHelperPath = Join-Path $PSScriptRoot "v4_release_asset_upload.ps1"
 $workflowPath = Join-Path $repoRoot ".github/workflows/release-v4.yml"
 $topologyWorkflowPath = Join-Path $repoRoot ".github/workflows/rehearse-v4-production-topology.yml"
 $pipeline = Get-Content -LiteralPath $pipelinePath -Raw
-$rehearsal = Get-Content -LiteralPath $rehearsalPath -Raw
 $topologyRehearsal = Get-Content -LiteralPath $topologyRehearsalPath -Raw
 $fixtureWrapper = Get-Content -LiteralPath $fixtureWrapperPath -Raw
 $fixtureCore = Get-Content -LiteralPath $fixtureCorePath -Raw
@@ -22,6 +20,26 @@ $uploadHelper = Get-Content -LiteralPath $uploadHelperPath -Raw
 $workflow = Get-Content -LiteralPath $workflowPath -Raw
 $topologyWorkflow = Get-Content -LiteralPath $topologyWorkflowPath -Raw
 $testHarness = Get-Content -LiteralPath $PSCommandPath -Raw
+
+foreach ($source in @(
+    [pscustomobject]@{ Name = "release workflow"; Text = $workflow },
+    [pscustomobject]@{ Name = "release pipeline"; Text = $pipeline },
+    [pscustomobject]@{ Name = "metadata promotion"; Text = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "promote_v4_metadata.ps1") -Raw) },
+    [pscustomobject]@{ Name = "asset upload"; Text = $uploadHelper },
+    [pscustomobject]@{ Name = "legacy Latest guard"; Text = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "ci_v4_release_latest_guard.ps1") -Raw) }
+)) {
+    foreach ($forbidden in @(
+        "Sky-Auto-Player-Releases",
+        "V4_RELEASE_AUTHORITY_TOKEN",
+        "Invoke-AuthorityApi",
+        "AuthorityTokenEnv",
+        "AuthorityCheckout"
+    )) {
+        if ($source.Text.Contains($forbidden)) {
+            Fail "$($source.Name) retains forbidden two-repository marker: $forbidden"
+        }
+    }
+}
 
 function Fail([string]$Message) { throw "FAILED: $Message" }
 
@@ -44,7 +62,8 @@ function Get-SanitizedReleaseProbeOutput {
     foreach ($secretName in @(
         'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
         'TAURI_SIGNING_PRIVATE_KEY',
-        'V4_RELEASE_AUTHORITY_TOKEN'
+        'GH_TOKEN',
+        'GITHUB_TOKEN'
     )) {
         $sanitized = [regex]::Replace(
             $sanitized,
@@ -100,8 +119,7 @@ if ($workflow.Contains("CARGO_TARGET_DIR=")) {
 }
 
 foreach ($script in @(
-    [pscustomobject]@{ Name = "production release pipeline"; Source = $pipeline },
-    [pscustomobject]@{ Name = "authority rehearsal"; Source = $rehearsal }
+    [pscustomobject]@{ Name = "production release pipeline"; Source = $pipeline }
 )) {
     foreach ($forbidden in @(
         'gh @Arguments --output', 'gh.exe @Arguments --output', '--output $OutputPath',
@@ -112,7 +130,7 @@ foreach ($script in @(
         }
     }
     foreach ($marker in @(
-        'Invoke-GhBinaryOutput', 'Invoke-V4ReleaseAuthorityAssetUpload',
+        'Invoke-GhBinaryOutput', 'Invoke-V4ReleaseAssetUpload',
         'PSVersionTable.PSVersion', '7.4.0', 'RedirectStandardOutput',
         'RedirectStandardError', 'StandardOutput.BaseStream', 'ReadToEndAsync',
         'ArgumentList'
@@ -216,35 +234,15 @@ function Test-RawUploadRequiresCreated {
 
 Test-RawUploadRequiresCreated
 
-foreach ($marker in @(
-    'failed closed at phase',
-    'cleanup left the disposable draft release',
-    'cleanup left the disposable tag ref'
-)) {
-    if (-not $rehearsal.Contains($marker)) {
-        Fail "authority rehearsal cleanup diagnostic/verification marker is missing: $marker"
-    }
-}
-$tagProbeMarker = '"api", "repos/$authorityRepository/git/ref/tags/$tag"'
-$tagDeleteMarker = '"api", "--method", "DELETE", "repos/$authorityRepository/git/refs/tags/$tag"'
-$firstTagProbe = $rehearsal.IndexOf($tagProbeMarker, [StringComparison]::Ordinal)
-$tagDelete = $rehearsal.IndexOf($tagDeleteMarker, [StringComparison]::Ordinal)
-if ($firstTagProbe -lt 0 -or $tagDelete -lt 0 -or $firstTagProbe -gt $tagDelete) {
-    Fail "authority rehearsal must probe the disposable tag ref before attempting DELETE"
-}
-if (([regex]::Matches($rehearsal, [regex]::Escape($tagProbeMarker))).Count -lt 2) {
-    Fail "authority rehearsal must verify the disposable tag ref is absent after cleanup"
-}
-
 if (([regex]::Matches($pipeline, "orchestrate_v4_production_release\.ps1")).Count -ne 1) {
     Fail "production orchestrator must have exactly one call site"
 }
 foreach ($marker in @(
-    'ValidateRequest', 'ValidateAuthority', 'BuildCandidate', 'CreateDraft',
+    'ValidateRequest', 'ValidateRepository', 'BuildCandidate', 'CreateDraft',
     'DownloadDraft', 'QualifyDownloaded', 'RecordAttestations', 'PublishDraft',
     'PromoteMetadata', 'FinalVerify', 'unsigned-zero-budget',
     'metadata promotion is forbidden before immutable publication',
-    'authority already contains published release/tag', 'unpublished draft reuse',
+    'repository already contains published release/tag', 'unpublished draft reuse',
     'published tags are immutable', 'git/refs/tags/$Tag',
     'GitHub''s successful DELETE endpoints return an empty body',
     'Get-FileHash', 'verify-signature', 'sbom', 'verify-tauri-bundle',
@@ -354,7 +352,7 @@ foreach ($marker in @(
     'runs-on: [self-hosted, windows, v4-release, single-tenant]',
     'contents: read', 'id-token: write', 'attestations: write',
     'actions/upload-artifact@',
-    'V4_RELEASE_AUTHORITY_TOKEN',
+    'GH_TOKEN: ${{ github.token }}',
     'ref: ${{ inputs.source_sha }}',
     'persist-credentials: false',
     'actions/attest@',
@@ -400,7 +398,7 @@ foreach ($marker in @(
 }
 foreach ($forbidden in @(
     'V4_RELEASE_AUTHORITY_TOKEN',
-    'ValidateAuthority',
+    'ValidateRepository',
     'CreateDraft',
     'PublishDraft',
     'PromoteMetadata',
@@ -439,7 +437,7 @@ class MockReleaseApi {
         if ($this.BuildCount -ne 1 -or $this.Draft) { throw "draft ordering violation" }
         $this.Draft = $true
         $this.UploadedThroughReleaseUrl = $true
-        $this.UploadUrl = "https://uploads.github.com/repos/pumni/Sky-Auto-Player-Releases/releases/42/assets"
+        $this.UploadUrl = "https://uploads.github.com/repos/pumni/Sky-Auto-Player/releases/42/assets"
     }
     [void] AssertExactDraftUpload() {
         if (-not $this.Draft -or -not $this.UploadedThroughReleaseUrl -or
@@ -722,18 +720,18 @@ $recs = @(
     }
 }
 
-# Safe authority asset name contract regression tests
-function Test-SafeAuthorityAssetNameContract {
+# Safe release asset name contract regression tests
+function Test-SafeReleaseAssetNameContract {
     # 1. Source installer name with spaces maps to deterministic safe authority name
     $sourceInstaller = "Sky Auto Player_4.0.0-rc.1_x64-setup.exe"
-    $safeInstaller = Get-V4SafeAuthorityAssetName $sourceInstaller
+    $safeInstaller = Get-V4SafeReleaseAssetName $sourceInstaller
     if ($safeInstaller -ne "Sky.Auto.Player_4.0.0-rc.1_x64-setup.exe") {
-        Fail "Get-V4SafeAuthorityAssetName did not map source installer spaces to dots"
+        Fail "Get-V4SafeReleaseAssetName did not map source installer spaces to dots"
     }
     $sourceSig = "$sourceInstaller.sig"
-    $safeSig = Get-V4SafeAuthorityAssetName $sourceSig
+    $safeSig = Get-V4SafeReleaseAssetName $sourceSig
     if ($safeSig -ne "Sky.Auto.Player_4.0.0-rc.1_x64-setup.exe.sig") {
-        Fail "Get-V4SafeAuthorityAssetName did not map signature name spaces to dots"
+        Fail "Get-V4SafeReleaseAssetName did not map signature name spaces to dots"
     }
 
     # 2. Source and authority records keep identical SHA and size
@@ -748,7 +746,7 @@ function Test-SafeAuthorityAssetNameContract {
         $rec = [pscustomobject]@{
             name = $safeInstaller
             source_name = $sourceInstaller
-            authority_name = $safeInstaller
+            release_name = $safeInstaller
             role = "installer"
             size = [int64]$testBytes.Length
             sha256 = $fileSha
@@ -756,8 +754,8 @@ function Test-SafeAuthorityAssetNameContract {
         if ($rec.size -ne [int64]$testBytes.Length -or $rec.sha256 -ne $fileSha) {
             Fail "source and authority record sizes or SHA-256 digests do not match"
         }
-        if ($rec.source_name -ne $sourceInstaller -or $rec.authority_name -ne $safeInstaller) {
-            Fail "record does not cleanly separate source_name from authority_name"
+        if ($rec.source_name -ne $sourceInstaller -or $rec.release_name -ne $safeInstaller) {
+            Fail "record does not cleanly separate source_name from release_name"
         }
     } finally {
         if (Test-Path -LiteralPath $tempDir) {
@@ -766,8 +764,8 @@ function Test-SafeAuthorityAssetNameContract {
     }
 
     # 3. Upload response exact-name matching remains mandatory
-    if ($pipeline -notmatch '\[string\]\$uploaded\.name\s+-ne\s+\$authorityName') {
-        Fail "pipeline must enforce uploaded.name -eq authorityName exact response match"
+    if ($pipeline -notmatch '\[string\]\$uploaded\.name\s+-ne\s+\$releaseName') {
+        Fail "pipeline must enforce uploaded.name -eq releaseName exact response match"
     }
 
     # 4. Unsafe name fails before CreateDraft
@@ -777,18 +775,18 @@ function Test-SafeAuthorityAssetNameContract {
     )) {
         $failedClosed = $false
         try {
-            $null = Get-V4SafeAuthorityAssetName $unsafe
+            $null = Get-V4SafeReleaseAssetName $unsafe
         } catch {
             $failedClosed = $true
         }
         if (-not $failedClosed) {
-            Fail "Get-V4SafeAuthorityAssetName accepted unsafe name: '$unsafe'"
+            Fail "Get-V4SafeReleaseAssetName accepted unsafe name: '$unsafe'"
         }
     }
 
     # 5. Authority-name collision fails before CreateDraft
-    if ($pipeline -notmatch 'authority asset name collision detected') {
-        Fail "pipeline must contain authority asset name collision check before CreateDraft"
+    if ($pipeline -notmatch 'release asset name collision detected') {
+        Fail "pipeline must contain release asset name collision check before CreateDraft"
     }
 
     # 6. Downloaded safe-name asset qualifies against source-name evidence without byte mutation
@@ -819,20 +817,9 @@ function Test-SafeAuthorityAssetNameContract {
         }
     }
 
-    # 7. Authority rehearsal exercises a filename that would normalize and proves sending already-safe name
-    if ($rehearsal -notmatch 'sourceArtifactName\s*=\s*"v4 authority upload rehearsal ') {
-        Fail "authority rehearsal must exercise a source artifact name containing spaces"
-    }
-    if ($rehearsal -notmatch 'safeAuthorityName\s*=\s*Get-V4SafeAuthorityAssetName') {
-        Fail "authority rehearsal must map source name via Get-V4SafeAuthorityAssetName"
-    }
-    if ($rehearsal -notmatch '-AssetName\s+\$safeAuthorityName') {
-        Fail "authority rehearsal must upload asset with safeAuthorityName"
-    }
-
-    Write-Host "V4 safe authority asset name contract: PASS (deterministic dot mapping; collision check; exact response check; safe staging)"
+    Write-Host "V4 safe release asset name contract: PASS (deterministic dot mapping; collision check; exact response check; safe staging)"
 }
 
-Test-SafeAuthorityAssetNameContract
+Test-SafeReleaseAssetNameContract
 
 Write-Host "V4 release pipeline contract/self-test: PASS (mock draft/download/qualify/attest/publish/promote; build count=1)"

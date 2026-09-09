@@ -13,7 +13,7 @@ on:
         type: choice
         options: [stable, beta]
       tag:
-        description: "Authority release tag; must be exactly v<version>"
+        description: "Canonical repository release tag; must be exactly v<version>"
         required: true
         type: string
       source_sha:
@@ -31,8 +31,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 concurrency:
   group: v4-release-${{ inputs.tag }}
@@ -49,6 +47,10 @@ jobs:
     # It identifies the accepted dedicated/single-tenant release runner.
     runs-on: [self-hosted, windows, v4-release, single-tenant]
     environment: v4-production-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       V4_RELEASE_VERSION: ${{ inputs.version }}
       V4_RELEASE_CHANNEL: ${{ inputs.channel }}
@@ -90,12 +92,12 @@ jobs:
             -ReleaseNotesPath $env:V4_RELEASE_NOTES_PATH `
             -PublicationDateUtc $env:V4_RELEASE_PUBLICATION_DATE
 
-      - name: Verify release authority main is initialized
+      - name: Verify canonical repository release policy
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
-            -State ValidateAuthority `
+            -State ValidateRepository `
             -Version $env:V4_RELEASE_VERSION `
             -Channel $env:V4_RELEASE_CHANNEL `
             -Tag $env:V4_RELEASE_TAG `
@@ -119,9 +121,9 @@ jobs:
             -StateRoot $env:V4_RELEASE_STATE_ROOT `
             -UpdaterPrivateKeyPath $env:V4_UPDATER_PRIVATE_KEY_PATH
 
-      - name: Create exact candidate draft in release authority
+      - name: Create exact candidate draft in canonical repository
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State CreateDraft `
@@ -133,9 +135,9 @@ jobs:
             -StateRoot $env:V4_RELEASE_STATE_ROOT `
             -ReleaseNotesPath $env:V4_RELEASE_NOTES_PATH
 
-      - name: Re-download exact draft assets from release authority
+      - name: Re-download exact draft assets from canonical repository
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State DownloadDraft `
@@ -210,7 +212,7 @@ jobs:
 
       - name: Publish the already-qualified draft immutably
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State PublishDraft `
@@ -221,9 +223,9 @@ jobs:
             -WorkflowSha $env:V4_RELEASE_WORKFLOW_SHA `
             -StateRoot $env:V4_RELEASE_STATE_ROOT
 
-      - name: Promote only after immutable publication
+      - name: Promote release metadata only after immutable publication
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State PromoteMetadata `
@@ -238,7 +240,7 @@ jobs:
 
       - name: Re-fetch and verify final public release and metadata
         env:
-          V4_RELEASE_AUTHORITY_TOKEN: ${{ secrets.V4_RELEASE_AUTHORITY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/v4_release_pipeline.ps1 `
             -State FinalVerify `

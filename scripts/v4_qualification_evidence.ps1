@@ -110,7 +110,7 @@ function New-V4CanonicalProductionEvidence {
     }
 }
 
-function Get-V4SafeAuthorityAssetName {
+function Get-V4SafeReleaseAssetName {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)] [string]$Name
@@ -136,4 +136,3 @@ function Get-V4SafeAuthorityAssetName {
 
     return $safeName
 }
-

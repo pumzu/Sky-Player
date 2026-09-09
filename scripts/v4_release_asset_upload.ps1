@@ -1,4 +1,4 @@
-function Get-V4ReleaseAuthorityAssetUploadUrl {
+function Get-V4ReleaseAssetUploadUrl {
     param(
         [Parameter(Mandatory = $true)] [string]$UploadUrl,
         [Parameter(Mandatory = $true)] [string]$AssetName
@@ -16,10 +16,10 @@ function Get-V4ReleaseAuthorityAssetUploadUrl {
     return $assetUrl
 }
 
-$uploadUrlSelfTestBase = "https://uploads.github.com/repos/pumni/Sky-Auto-Player-Releases/releases/42/assets"
+$uploadUrlSelfTestBase = "https://uploads.github.com/repos/pumni/Sky-Auto-Player/releases/42/assets"
 $uploadUrlSelfTestAsset = "fixture +#.bin"
-$uploadUrlSelfTestExpected = "https://uploads.github.com/repos/pumni/Sky-Auto-Player-Releases/releases/42/assets?name=fixture%20%2B%23.bin"
-$uploadUrlSelfTestActual = Get-V4ReleaseAuthorityAssetUploadUrl `
+$uploadUrlSelfTestExpected = "https://uploads.github.com/repos/pumni/Sky-Auto-Player/releases/42/assets?name=fixture%20%2B%23.bin"
+$uploadUrlSelfTestActual = Get-V4ReleaseAssetUploadUrl `
     -UploadUrl $uploadUrlSelfTestBase `
     -AssetName $uploadUrlSelfTestAsset
 if ($uploadUrlSelfTestActual -ne $uploadUrlSelfTestExpected) {
@@ -27,7 +27,7 @@ if ($uploadUrlSelfTestActual -ne $uploadUrlSelfTestExpected) {
 }
 $uploadUrlSelfTestRejectedExistingQuery = $false
 try {
-    [void](Get-V4ReleaseAuthorityAssetUploadUrl `
+    [void](Get-V4ReleaseAssetUploadUrl `
         -UploadUrl ($uploadUrlSelfTestBase + "?existing=1") `
         -AssetName $uploadUrlSelfTestAsset)
 } catch {
@@ -38,23 +38,23 @@ if (-not $uploadUrlSelfTestRejectedExistingQuery) {
 }
 Remove-Variable uploadUrlSelfTestBase, uploadUrlSelfTestAsset, uploadUrlSelfTestExpected, uploadUrlSelfTestActual, uploadUrlSelfTestRejectedExistingQuery -ErrorAction SilentlyContinue
 
-function Invoke-V4ReleaseAuthorityAssetUpload {
+function Invoke-V4ReleaseAssetUpload {
     param(
         [Parameter(Mandatory = $true)] [string]$UploadUrl,
         [Parameter(Mandatory = $true)] [string]$AssetName,
-        [Parameter(Mandatory = $true)] [string]$FilePath,
-        [Parameter(Mandatory = $true)] [string]$Token
+        [Parameter(Mandatory = $true)] [string]$FilePath
     )
 
     if ($PSVersionTable.PSVersion -lt [Version]"7.4.0") {
         throw "release asset upload requires PowerShell 7.4 or newer"
     }
-    if ([string]::IsNullOrWhiteSpace($Token)) { throw "release authority token is unavailable" }
+    $token = if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+    if ([string]::IsNullOrWhiteSpace($token)) { throw "repository GITHUB_TOKEN is unavailable" }
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
         throw "release asset upload file is missing"
     }
 
-    $assetUrl = Get-V4ReleaseAuthorityAssetUploadUrl -UploadUrl $UploadUrl -AssetName $AssetName
+    $assetUrl = Get-V4ReleaseAssetUploadUrl -UploadUrl $UploadUrl -AssetName $AssetName
     $client = [System.Net.Http.HttpClient]::new()
     $request = $null
     $fileStream = $null
@@ -89,13 +89,13 @@ function Invoke-V4ReleaseAuthorityAssetUpload {
         [void]$request.Headers.Add("X-GitHub-Api-Version", "2026-03-10")
         $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new(
             "Bearer",
-            $Token
+            $token
         )
         $request.Content = $content
         $response = $client.SendAsync($request).GetAwaiter().GetResult()
         $responseBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
         if ($response.StatusCode -ne [System.Net.HttpStatusCode]::Created) {
-            throw "release authority asset upload failed"
+            throw "release asset upload failed"
         }
         return ($responseBody | ConvertFrom-Json)
     } finally {
